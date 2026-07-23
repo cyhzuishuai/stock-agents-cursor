@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "symbol": "AAPL",
+      "side": "buy",
+      "flags": ["size_ok"],
+      "scores": { "liquidity": 0.9, "volatility": 0.4 },
+      "suggested_action": "auto"
+    }
+  ],
+  "warnings": []
+}

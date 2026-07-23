@@ -1,0 +1,11 @@
+{
+  "intents": [
+    {
+      "symbol": "AAPL",
+      "side": "buy",
+      "urgency": "normal",
+      "rationale": "Bullish research with capacity."
+    }
+  ],
+  "warnings": []
+}

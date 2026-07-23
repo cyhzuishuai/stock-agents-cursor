@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "decision_result.schema.json",
+  "type": "object",
+  "required": ["intents"],
+  "properties": {
+    "intents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "side", "urgency", "rationale"],
+        "properties": {
+          "symbol": { "type": "string" },
+          "side": { "type": "string", "enum": ["buy", "sell", "hold"] },
+          "urgency": { "type": "string" },
+          "rationale": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

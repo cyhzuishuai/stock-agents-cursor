@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "portfolio_result.schema.json",
+  "type": "object",
+  "required": ["proposals"],
+  "properties": {
+    "proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "side", "qty", "estimated_notional", "estimated_cash_impact"],
+        "properties": {
+          "symbol": { "type": "string" },
+          "side": { "type": "string", "enum": ["buy", "sell"] },
+          "qty": { "type": "number" },
+          "target_weight": { "type": "number" },
+          "stop_loss": { "type": "number" },
+          "take_profit": { "type": "number" },
+          "estimated_notional": { "type": "number" },
+          "estimated_cash_impact": { "type": "number" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}
