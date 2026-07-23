@@ -1,0 +1,19 @@
+{
+  "run_id": "11111111-1111-1111-1111-111111111111",
+  "trade_date": "2026-07-22",
+  "watchlist": ["AAPL", "MSFT"],
+  "account_snapshot": {
+    "cash": 100000.0,
+    "currency": "USD",
+    "positions": [
+      {
+        "symbol": "AAPL",
+        "qty": 10,
+        "avg_cost": 180.0,
+        "stop_loss": 160.0,
+        "take_profit": 220.0
+      }
+    ]
+  },
+  "prior_step_outputs": {}
+}
