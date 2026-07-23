@@ -1,0 +1,16 @@
+{
+  "bars": [
+    {
+      "symbol": "AAPL",
+      "trade_date": "2026-07-22",
+      "open": 190.0,
+      "high": 192.0,
+      "low": 188.0,
+      "close": 191.0,
+      "volume": 1000000,
+      "return_1d": 0.01,
+      "volatility_20d": 0.02
+    }
+  ],
+  "warnings": []
+}

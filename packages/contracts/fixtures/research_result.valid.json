@@ -1,0 +1,11 @@
+{
+  "items": [
+    {
+      "symbol": "AAPL",
+      "bias": "bull",
+      "confidence": 0.72,
+      "thesis": "Momentum and volume supportive."
+    }
+  ],
+  "warnings": []
+}
