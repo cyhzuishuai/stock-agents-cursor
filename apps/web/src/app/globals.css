@@ -381,22 +381,26 @@ textarea:focus-visible {
 .run-status-badge {
   display: inline-block;
   padding: 0.125rem 0.5rem;
-  border-radius: 999px;
+  border-radius: 0.25rem;
   font-size: 0.8125rem;
   font-weight: 500;
-  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+  font-family: var(--font-data), ui-monospace, monospace;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .run-status-badge--success {
-  background: color-mix(in srgb, var(--settle-plus) 20%, transparent);
+  background: color-mix(in srgb, var(--settle-plus) 18%, transparent);
+  color: var(--settle-plus);
 }
 
 .run-status-badge--danger {
-  background: color-mix(in srgb, var(--settle-minus) 20%, transparent);
+  background: color-mix(in srgb, var(--settle-minus) 18%, transparent);
+  color: var(--settle-minus);
 }
 
 .run-status-badge--warning {
-  background: color-mix(in srgb, #ca8a04 20%, transparent);
+  background: color-mix(in srgb, var(--pending) 18%, transparent);
+  color: var(--pending);
 }
 
 .run-status-badge--muted {
@@ -405,20 +409,21 @@ textarea:focus-visible {
 
 .nav-sparkline {
   display: block;
+  width: 100%;
+  max-width: 20rem;
   border: 1px solid var(--rule);
-  border-radius: 0.375rem;
-  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+  border-radius: 0.25rem;
+  background: var(--surface);
 }
 
 .nav-sparkline__line {
-  stroke: var(--foreground);
+  stroke: var(--ledger);
   stroke-width: 2;
 }
 
 .nav-sparkline__empty {
-  fill: var(--foreground);
+  fill: var(--ink-muted);
   font-size: 10px;
-  opacity: 0.6;
 }
 
 .portfolio {
