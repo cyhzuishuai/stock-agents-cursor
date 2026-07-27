@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,17 @@ func NewHub(streamEnabled bool, apiKey, apiSecret string) *Hub {
 // Enabled reports whether the hub should accept SSE clients.
 func (h *Hub) Enabled() bool {
 	return h != nil && h.enabled
+}
+
+// Start prepares the hub for serving SSE clients. Upstream Alpaca WebSocket
+// pumps are optional and may be wired later; PublishQuote remains the
+// injection point for tests and future pumps.
+func (h *Hub) Start(ctx context.Context) error {
+	if !h.Enabled() {
+		return nil
+	}
+	_ = ctx
+	return nil
 }
 
 // Subscribe registers ch for fan-out. The returned unsubscribe removes it.

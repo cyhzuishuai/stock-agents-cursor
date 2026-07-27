@@ -9,6 +9,7 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/config"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
 	"github.com/cyh/stock-agents/services/api/internal/strategy"
+	"github.com/cyh/stock-agents/services/api/internal/stream"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -40,6 +41,7 @@ type RouterDeps struct {
 	Strategies *strategy.Service
 	Scheduler  SchedulerReloader
 	Broker     broker.Client
+	Stream     *stream.Hub
 }
 
 // API holds shared handler dependencies.
@@ -53,6 +55,7 @@ type API struct {
 	Strategies *strategy.Service
 	Scheduler  SchedulerReloader
 	Broker     broker.Client
+	Stream     *stream.Hub
 }
 
 func (h *API) requireBroker(c *gin.Context) bool {

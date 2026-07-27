@@ -44,6 +44,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		Strategies: deps.Strategies,
 		Scheduler:  deps.Scheduler,
 		Broker:     deps.Broker,
+		Stream:     deps.Stream,
 	}
 	authHandlers := &auth.Handlers{DB: deps.DB, JWTSecret: deps.JWTSecret}
 	approvalHandlers := &approvals.Handlers{Service: deps.Approvals, JWTSecret: deps.JWTSecret}
@@ -59,6 +60,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			authed.GET("/overview", api.Overview)
 			authed.GET("/portfolio", api.Portfolio)
 			authed.GET("/orders", api.ListOrders)
+			authed.GET("/stream/market", api.StreamMarket)
+			authed.GET("/stream/account", api.StreamAccount)
 			authed.GET("/runs", api.ListRuns)
 			authed.POST("/runs/eod", api.PostEOD)
 			authed.GET("/runs/:id", api.GetRun)

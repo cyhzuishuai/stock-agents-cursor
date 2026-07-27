@@ -16,6 +16,7 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/risk"
 	"github.com/cyh/stock-agents/services/api/internal/scheduler"
 	"github.com/cyh/stock-agents/services/api/internal/strategy"
+	"github.com/cyh/stock-agents/services/api/internal/stream"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/redis/go-redis/v9"
 )
@@ -108,6 +109,13 @@ func main() {
 		}()
 	}
 
+	streamHub := stream.NewHub(cfg.AlpacaStreamEnabled, cfg.AlpacaAPIKey, cfg.AlpacaAPISecret)
+	if cfg.AlpacaStreamEnabled {
+		if err := streamHub.Start(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "stream hub: %v\n", err)
+		}
+	}
+
 	router := httpserver.NewRouter(httpserver.RouterDeps{
 		DB:         gormDB,
 		JWTSecret:  cfg.JWTSecret,
@@ -118,6 +126,7 @@ func main() {
 		Strategies: strategySvc,
 		Scheduler:  schedReloader,
 		Broker:     brokerClient,
+		Stream:     streamHub,
 	})
 
 	addr := os.Getenv("API_ADDR")
