@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/httpserver"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
 	"github.com/cyh/stock-agents/services/api/internal/risk"
+	"github.com/cyh/stock-agents/services/api/internal/scheduler"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/redis/go-redis/v9"
 )
@@ -71,6 +73,23 @@ func main() {
 			}),
 			Redis: rdb,
 		}
+	}
+
+	if eodRunner != nil {
+		sched, err := scheduler.New(scheduler.Options{
+			Runner:   eodRunner,
+			CronExpr: scheduler.CronExprFromEnv(),
+			Location: scheduler.NewYorkLocation(),
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "scheduler: %v\n", err)
+			os.Exit(1)
+		}
+		go func() {
+			if err := sched.Start(context.Background()); err != nil {
+				fmt.Fprintf(os.Stderr, "scheduler: %v\n", err)
+			}
+		}()
 	}
 
 	router := httpserver.NewRouter(httpserver.RouterDeps{
