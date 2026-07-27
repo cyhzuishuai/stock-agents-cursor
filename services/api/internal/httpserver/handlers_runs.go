@@ -12,6 +12,17 @@ import (
 	"gorm.io/gorm"
 )
 
+func (h *API) lookupStrategyName(c *gin.Context, strategyID *uint) string {
+	if strategyID == nil {
+		return ""
+	}
+	var st models.Strategy
+	if err := h.DB.WithContext(c.Request.Context()).First(&st, *strategyID).Error; err != nil {
+		return ""
+	}
+	return st.Name
+}
+
 func (h *API) ListRuns(c *gin.Context) {
 	var runs []models.WorkflowRun
 	if err := h.DB.WithContext(c.Request.Context()).Order("id DESC").Find(&runs).Error; err != nil {
@@ -21,10 +32,13 @@ func (h *API) ListRuns(c *gin.Context) {
 	out := make([]gin.H, 0, len(runs))
 	for _, r := range runs {
 		out = append(out, gin.H{
-			"id":         r.ID,
-			"trade_date": r.TradeDate,
-			"status":     r.Status,
-			"created_at": createdAtPlaceholder(r.ID),
+			"id":            r.ID,
+			"trade_date":    r.TradeDate,
+			"status":        r.Status,
+			"strategy_id":   r.StrategyID,
+			"strategy_name": h.lookupStrategyName(c, r.StrategyID),
+			"trigger":       r.Trigger,
+			"created_at":    createdAtPlaceholder(r.ID),
 		})
 	}
 	c.JSON(http.StatusOK, out)
@@ -64,12 +78,15 @@ func (h *API) GetRun(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"id":         run.ID,
-		"trade_date": run.TradeDate,
-		"status":     run.Status,
-		"steps":      steps,
-		"proposals":  proposals,
-		"orders":     orders,
+		"id":            run.ID,
+		"trade_date":    run.TradeDate,
+		"status":        run.Status,
+		"strategy_id":   run.StrategyID,
+		"strategy_name": h.lookupStrategyName(c, run.StrategyID),
+		"trigger":       run.Trigger,
+		"steps":         steps,
+		"proposals":     proposals,
+		"orders":        orders,
 	})
 }
 

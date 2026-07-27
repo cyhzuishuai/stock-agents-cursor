@@ -281,7 +281,16 @@ func TestRunsDetailAndEODAndCancel(t *testing.T) {
 	router, gormDB, secret, runner, _ := setupAPI(t)
 	token := bearerToken(t, secret, gormDB)
 
-	run := models.WorkflowRun{TradeDate: "2026-07-25", Status: workflow.StatusAwaitingApproval}
+	st := models.Strategy{Name: "Test Strategy", IsActive: true, ExecutionMode: "require_approval"}
+	if err := gormDB.Create(&st).Error; err != nil {
+		t.Fatalf("create strategy: %v", err)
+	}
+	run := models.WorkflowRun{
+		TradeDate:  "2026-07-25",
+		Status:     workflow.StatusAwaitingApproval,
+		StrategyID: &st.ID,
+		Trigger:    workflow.TriggerManual,
+	}
 	if err := gormDB.Create(&run).Error; err != nil {
 		t.Fatalf("create run: %v", err)
 	}
@@ -311,10 +320,52 @@ func TestRunsDetailAndEODAndCancel(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("json: %v", err)
 		}
-		for _, key := range []string{"id", "trade_date", "status", "steps", "proposals", "orders"} {
+		for _, key := range []string{"id", "trade_date", "status", "strategy_id", "strategy_name", "trigger", "steps", "proposals", "orders"} {
 			if _, ok := resp[key]; !ok {
 				t.Fatalf("missing key %q", key)
 			}
+		}
+		if resp["strategy_name"] != "Test Strategy" {
+			t.Fatalf("strategy_name: got %v want Test Strategy", resp["strategy_name"])
+		}
+		if resp["trigger"] != workflow.TriggerManual {
+			t.Fatalf("trigger: got %v want %s", resp["trigger"], workflow.TriggerManual)
+		}
+		steps, ok := resp["steps"].([]any)
+		if !ok || len(steps) == 0 {
+			t.Fatalf("steps: got %T %v", resp["steps"], resp["steps"])
+		}
+		step0, ok := steps[0].(map[string]any)
+		if !ok {
+			t.Fatalf("step[0]: got %T", steps[0])
+		}
+		if _, ok := step0["payload_json"]; !ok {
+			t.Fatalf("missing payload_json on step: %v", step0)
+		}
+	})
+
+	t.Run("runs list enriched", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/runs", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status: got %d want 200 body=%s", w.Code, w.Body.String())
+		}
+		var resp []map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("json: %v body=%s", err, w.Body.String())
+		}
+		if len(resp) == 0 {
+			t.Fatal("expected at least one run")
+		}
+		for _, key := range []string{"strategy_id", "strategy_name", "trigger"} {
+			if _, ok := resp[0][key]; !ok {
+				t.Fatalf("missing key %q", key)
+			}
+		}
+		if resp[0]["strategy_name"] != "Test Strategy" {
+			t.Fatalf("strategy_name: got %v want Test Strategy", resp[0]["strategy_name"])
 		}
 	})
 
