@@ -38,6 +38,22 @@ func TestValidateStrategyFieldsNegativePreOpen(t *testing.T) {
 	}
 }
 
+func TestValidateStrategyFieldsPreOpenExceedsMarketOpen(t *testing.T) {
+	s := validStrategy()
+	s.PreOpenMinutes = 571
+	if err := ValidateStrategyFields(s); err == nil {
+		t.Fatal("expected error for pre_open_minutes > 570")
+	}
+}
+
+func TestValidateStrategyFieldsPreOpenAtMarketOpenLimit(t *testing.T) {
+	s := validStrategy()
+	s.PreOpenMinutes = 570
+	if err := ValidateStrategyFields(s); err != nil {
+		t.Fatalf("pre_open_minutes=570 should be valid: %v", err)
+	}
+}
+
 func TestValidateStrategyFieldsIntradayIntervalTooSmall(t *testing.T) {
 	s := validStrategy()
 	s.IntradayEveryMinutes = 10

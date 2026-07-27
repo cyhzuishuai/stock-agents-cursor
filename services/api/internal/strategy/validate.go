@@ -22,6 +22,9 @@ func ValidateStrategyFields(s models.Strategy) error {
 	if s.PreOpenMinutes < 0 {
 		return fmt.Errorf("pre_open_minutes must be >= 0")
 	}
+	if s.PreOpenMinutes > usRegularOpenMinutes {
+		return fmt.Errorf("pre_open_minutes exceeds market open offset")
+	}
 
 	if s.IntradayEveryMinutes < 0 {
 		return fmt.Errorf("intraday_every_minutes must be >= 0")
