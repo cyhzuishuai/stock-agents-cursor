@@ -4,3 +4,9 @@
 __pycache__/
 .env
 node_modules/
+
+*.egg-info/
+
+
+*.exe
+
