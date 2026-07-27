@@ -67,6 +67,9 @@ export interface RunListItem {
   trade_date: string;
   status: string;
   created_at: string;
+  strategy_id: number | null;
+  strategy_name: string;
+  trigger: string;
 }
 
 export interface WorkflowStep {
@@ -99,6 +102,9 @@ export interface RunDetail {
   id: number;
   trade_date: string;
   status: string;
+  strategy_id: number | null;
+  strategy_name: string;
+  trigger: string;
   steps: WorkflowStep[];
   proposals: TradeProposal[];
   orders: Order[];

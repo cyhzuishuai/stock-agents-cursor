@@ -45,6 +45,28 @@ function orderNotional(order: Order): number | null {
   return typeof order.notional === "number" ? order.notional : null;
 }
 
+function StepPayload({ raw }: { raw: string }) {
+  const [open, setOpen] = useState(false);
+  let pretty = raw;
+  try {
+    pretty = JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    /* keep raw */
+  }
+  return (
+    <div>
+      <button
+        type="button"
+        className="btn btn--ghost"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? "Hide payload" : "Show payload"}
+      </button>
+      {open ? <pre className="runs__payload">{pretty}</pre> : null}
+    </div>
+  );
+}
+
 export default function RunDetailPage() {
   const params = useParams<{ id: string }>();
   const runId = params.id;
@@ -103,6 +125,8 @@ export default function RunDetailPage() {
         <p className="runs__meta">
           <span>{data.trade_date}</span>
           <RunStatusBadge status={data.status} />
+          {data.trigger ? <span>{data.trigger}</span> : null}
+          {data.strategy_name ? <span>{data.strategy_name}</span> : null}
         </p>
       </header>
 
@@ -116,6 +140,9 @@ export default function RunDetailPage() {
               <li key={step.id} className="runs__timeline-item">
                 <span className="runs__step-name">{stepLabel(step.step)}</span>
                 <span className={stepStatusClass(step.status)}>{step.status}</span>
+                {step.payload_json ? (
+                  <StepPayload raw={step.payload_json} />
+                ) : null}
               </li>
             ))}
           </ol>

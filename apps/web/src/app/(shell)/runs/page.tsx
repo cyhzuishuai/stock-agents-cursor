@@ -110,6 +110,8 @@ export default function RunsPage() {
               <tr>
                 <th scope="col">Run</th>
                 <th scope="col">Trade date</th>
+                <th scope="col">Trigger</th>
+                <th scope="col">Strategy</th>
                 <th scope="col">Status</th>
               </tr>
             </thead>
@@ -120,6 +122,8 @@ export default function RunsPage() {
                     <Link href={`/runs/${run.id}`}>#{run.id}</Link>
                   </td>
                   <td>{run.trade_date}</td>
+                  <td>{run.trigger || "—"}</td>
+                  <td>{run.strategy_name || "—"}</td>
                   <td>
                     <RunStatusBadge status={run.status} />
                   </td>

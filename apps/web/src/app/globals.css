@@ -738,6 +738,21 @@ textarea:focus-visible {
   color: var(--settle-minus);
 }
 
+.runs__payload {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem 1rem;
+  width: 100%;
+  overflow-x: auto;
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  white-space: pre;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--rule) 55%, transparent);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
 .settings {
   display: flex;
   flex-direction: column;
