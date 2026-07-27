@@ -36,7 +36,7 @@ services:
       context: ..
       dockerfile: services/agents/data/Dockerfile
     env_file:
-      - ./env.example
+      - ./.env
     environment:
       MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-free}
     restart: unless-stopped
@@ -46,7 +46,7 @@ services:
       context: ..
       dockerfile: services/agents/research/Dockerfile
     env_file:
-      - ./env.example
+      - ./.env
     environment:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
@@ -57,7 +57,7 @@ services:
       context: ..
       dockerfile: services/agents/decision/Dockerfile
     env_file:
-      - ./env.example
+      - ./.env
     environment:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
@@ -68,7 +68,7 @@ services:
       context: ..
       dockerfile: services/agents/portfolio/Dockerfile
     env_file:
-      - ./env.example
+      - ./.env
     environment:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
@@ -79,7 +79,7 @@ services:
       context: ..
       dockerfile: services/agents/risk/Dockerfile
     env_file:
-      - ./env.example
+      - ./.env
     environment:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
@@ -90,7 +90,7 @@ services:
       context: ../services/api
       dockerfile: Dockerfile
     env_file:
-      - ./env.example
+      - ./.env
     environment:
       API_ADDR: ":8080"
       DATABASE_URL: postgres://stock:stock@postgres:5432/stock?sslmode=disable

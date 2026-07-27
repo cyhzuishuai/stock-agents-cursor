@@ -1,5 +1,25 @@
 # Docker Compose deployment
 
+## Environment file (`.env`)
+
+**Path:** `deploy/.env` (same folder as this README / `docker-compose.yml`)
+
+```bash
+# from repo root
+cp deploy/env.example deploy/.env
+```
+
+Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, …).
+
+| File | Role |
+|------|------|
+| `deploy/env.example` | Committed template (safe defaults, empty secrets) |
+| `deploy/.env` | Local secrets; gitignored; loaded by Compose `env_file` |
+
+Compose also auto-loads `deploy/.env` for `${VAR}` substitution when you run compose from `deploy/`.
+
+Do **not** commit `deploy/.env`.
+
 ## Browser ports (local override)
 
 | Service | URL |
@@ -10,6 +30,8 @@
 The web app calls the API via `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8080`), which must be reachable from the browser—not an internal Docker hostname like `http://api:8080`.
 
 ## Run the stack
+
+**Prerequisite:** `deploy/.env` exists (copy from `env.example` first).
 
 From the repo root:
 
@@ -51,7 +73,7 @@ The script:
 4. Polls `GET /api/v1/runs/:id` until status is `executed`, `awaiting_approval`, or `failed`
 5. Exits `0` on success (`executed` or `awaiting_approval`), `1` on `failed` or timeout
 
-Optional environment variables (defaults match `env.example`):
+Optional environment variables for the smoke script (defaults match `env.example` / your `.env`):
 
 | Variable | Default |
 |----------|---------|
