@@ -8,9 +8,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func corsMiddleware() gin.HandlerFunc {
+	const webOrigin = "http://localhost:3000"
+	return func(c *gin.Context) {
+		if origin := c.GetHeader("Origin"); origin == webOrigin {
+			c.Header("Access-Control-Allow-Origin", webOrigin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		}
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	}
+}
+
 func NewRouter(deps RouterDeps) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(corsMiddleware())
 
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
