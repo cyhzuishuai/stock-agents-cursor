@@ -2,6 +2,7 @@ package approvals_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -120,7 +121,7 @@ func TestDecideRejectedMarksProposalRejected(t *testing.T) {
 	}
 }
 
-func TestCancelRunCancelsPending(t *testing.T) {
+func TestCancelRunOnAwaitingApprovalCancelsAndUpsertsNAV(t *testing.T) {
 	svc, gormDB, runID, approvalID := setupPendingApproval(t)
 
 	if err := svc.CancelRun(context.Background(), runID); err != nil {
@@ -149,6 +150,43 @@ func TestCancelRunCancelsPending(t *testing.T) {
 	}
 	if proposal.Status != workflow.ProposalCancelled {
 		t.Fatalf("proposal status: got %q", proposal.Status)
+	}
+
+	var nav models.NavSnapshot
+	if err := gormDB.Where("trade_date = ?", tradeDate).First(&nav).Error; err != nil {
+		t.Fatalf("nav: %v", err)
+	}
+	if nav.Nav != 100000 {
+		t.Fatalf("nav: got %v want 100000", nav.Nav)
+	}
+}
+
+func TestCancelRunOnExecutedDoesNotFlipToCancelled(t *testing.T) {
+	svc, gormDB, runID, approvalID := setupPendingApproval(t)
+
+	if err := svc.Decide(context.Background(), approvalID, approvals.DecisionApproved, "ok", 1); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+
+	var runBefore models.WorkflowRun
+	if err := gormDB.First(&runBefore, runID).Error; err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if runBefore.Status != workflow.StatusExecuted {
+		t.Fatalf("run status before cancel: got %q want executed", runBefore.Status)
+	}
+
+	err := svc.CancelRun(context.Background(), runID)
+	if !errors.Is(err, approvals.ErrRunNotCancellable) {
+		t.Fatalf("CancelRun: got %v want ErrRunNotCancellable", err)
+	}
+
+	var runAfter models.WorkflowRun
+	if err := gormDB.First(&runAfter, runID).Error; err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if runAfter.Status != workflow.StatusExecuted {
+		t.Fatalf("run status after cancel: got %q want executed", runAfter.Status)
 	}
 }
 

@@ -65,8 +65,11 @@ func (h *Handlers) CancelRun(c *gin.Context) {
 
 	if err := h.Service.CancelRun(c.Request.Context(), uint(id)); err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, ErrRunNotFound) {
+		switch {
+		case errors.Is(err, ErrRunNotFound):
 			status = http.StatusNotFound
+		case errors.Is(err, ErrRunNotCancellable):
+			status = http.StatusBadRequest
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return

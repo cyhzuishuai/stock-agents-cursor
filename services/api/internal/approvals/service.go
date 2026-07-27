@@ -21,8 +21,9 @@ var (
 	ErrApprovalNotFound  = errors.New("approval not found")
 	ErrApprovalNotPending = errors.New("approval not pending")
 	ErrInvalidDecision   = errors.New("invalid decision")
-	ErrRunNotFound       = errors.New("run not found")
-	ErrMissingFillPrice  = errors.New("missing fill price")
+	ErrRunNotFound        = errors.New("run not found")
+	ErrRunNotCancellable  = errors.New("run not cancellable")
+	ErrMissingFillPrice   = errors.New("missing fill price")
 )
 
 // LedgerAPI is the ledger surface used by approvals.
@@ -139,6 +140,14 @@ func (s *Service) CancelRun(ctx context.Context, runID uint) error {
 		}
 		return err
 	}
+	if run.Status != workflow.StatusAwaitingApproval {
+		return ErrRunNotCancellable
+	}
+
+	marks, err := s.loadMarks(ctx, run.ID)
+	if err != nil {
+		return err
+	}
 
 	var proposalIDs []uint
 	if err := s.DB.WithContext(ctx).Model(&models.TradeProposal{}).
@@ -160,7 +169,13 @@ func (s *Service) CancelRun(ctx context.Context, runID uint) error {
 		}
 	}
 
-	return s.DB.WithContext(ctx).Model(&run).Update("status", workflow.StatusCancelled).Error
+	if err := s.DB.WithContext(ctx).Model(&run).Update("status", workflow.StatusCancelled).Error; err != nil {
+		return err
+	}
+	if _, err := s.Ledger.UpsertNAV(ctx, run.TradeDate, marks); err != nil {
+		return fmt.Errorf("upsert nav: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) refreshRunStatus(ctx context.Context, runID uint) error {
