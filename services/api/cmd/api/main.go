@@ -9,12 +9,14 @@ import (
 )
 
 func main() {
-	if _, err := config.Load(); err != nil {
+	cfg, err := config.Load()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
 	}
 
-	router := httpserver.NewRouter()
+	// DB migrate/seed wired in Task 02.5; auth routes registered with nil DB for now.
+	router := httpserver.NewRouter(nil, cfg.JWTSecret)
 
 	addr := os.Getenv("API_ADDR")
 	if addr == "" {
