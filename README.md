@@ -52,7 +52,8 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.override.ym
 健康检查：`curl http://localhost:8080/healthz`  
 默认登录：`admin` / `admin123`（以你的 `.env` 为准）
 
-EOD 冒烟：`.\deploy\smoke_eod.ps1` 或 `./deploy/smoke_eod.sh`
+EOD 冒烟：`.\deploy\smoke_eod.ps1` 或 `./deploy/smoke_eod.sh`  
+API E2E（需先 `docker compose up`）：`.\deploy\e2e_api.ps1` 或 `./deploy/e2e_api.sh`
 
 ## 仓库结构（简要）
 

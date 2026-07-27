@@ -86,6 +86,19 @@ Optional environment variables for the smoke script (defaults match `env.example
 
 Bash requires `curl` plus `jq` or `python3` for JSON parsing.
 
+## API E2E (`e2e_api`)
+
+Broader than smoke: hits overview, portfolio, runs, EOD → terminal status, approvals, risk settings. Same env vars as smoke. **Requires a running Compose stack** (real Postgres/Redis/API/agents); local override uses `LLM_MODE=mock` — this is integration E2E, not production brokers/LLMs.
+
+```powershell
+# from deploy/ with stack up
+powershell -ExecutionPolicy Bypass -File .\e2e_api.ps1
+```
+
+```bash
+chmod +x e2e_api.sh && ./e2e_api.sh
+```
+
 ## Spec gate notes (V1)
 
 Verified against design spec §1.1 via codebase review and unit tests (`go test ./...` in `services/api`, `pytest` in `services/agents/common`). **Live Docker Compose smoke was not run** on the verification host because the Docker daemon was not running (`docker ps` failed); use the smoke scripts above when Docker is available.
