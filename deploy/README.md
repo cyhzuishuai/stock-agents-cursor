@@ -1,5 +1,7 @@
 # Docker Compose deployment
 
+**Authority (Phase 1):** Alpaca Paper is the source of truth for cash, equity, positions, orders, and fill prices. Go API is the only component that talks to Alpaca Trading. Postgres stores runs, proposals, approvals, and order mirrors for audit — not fill authority. See `docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`.
+
 ## Environment file (`.env`)
 
 **Path:** `deploy/.env` (same folder as this README / `docker-compose.yml`)
@@ -9,7 +11,15 @@
 cp deploy/env.example deploy/.env
 ```
 
-Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, …).
+Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, `ALPACA_API_KEY`, `ALPACA_API_SECRET`, …).
+
+| Variable | Notes |
+|----------|-------|
+| `ALPACA_API_KEY` / `ALPACA_API_SECRET` | Required for Paper trading and market data; server-side only |
+| `ALPACA_BASE_URL` | Default `https://paper-api.alpaca.markets` |
+| `ALPACA_DATA_BASE_URL` | Default `https://data.alpaca.markets` |
+| `MARKET_DATA_PROVIDER` | Default `alpaca`; set `free` (Yahoo) only as dev fallback without keys |
+| `INITIAL_CASH` | Offline/test seed only; live cash comes from Alpaca Paper account |
 
 | File | Role |
 |------|------|
@@ -99,21 +109,22 @@ powershell -ExecutionPolicy Bypass -File .\e2e_api.ps1
 chmod +x e2e_api.sh && ./e2e_api.sh
 ```
 
-## Spec gate notes (V1)
+## Spec gate notes (V1 + Alpaca Phase 1)
 
-Verified against design spec §1.1 via codebase review and unit tests (`go test ./...` in `services/api`, `pytest` in `services/agents/common`). **Live Docker Compose smoke was not run** on the verification host because the Docker daemon was not running (`docker ps` failed); use the smoke scripts above when Docker is available.
+Verified against design specs via codebase review and unit tests (`go test ./...` in `services/api`, `pytest` in `services/agents/common`). **Live Docker Compose smoke was not run** on the verification host because the Docker daemon was not running (`docker ps` failed); use the smoke scripts above when Docker is available.
 
 | Area | Status | Notes |
 |------|--------|-------|
 | EOD schedule + manual trigger | Implemented | **DB active strategy is authoritative** (pre-open + intraday ticks via `strategy.BuildJobSpecs`; hot-reload on activate/PATCH). `EOD_CRON` is **legacy only** (unused when a strategy is active; no active strategy → no automatic ticks). Manual: `POST /api/v1/runs/eod` (JWT) and `POST /internal/eod/run` (internal token); web **Run EOD now** on `/runs`. |
-| Five agents / ledger boundary | Implemented | `agent-data`, `agent-research`, `agent-decision`, `agent-portfolio`, `agent-risk` in Compose; ledger fills only via Go `ledger.Service.ApplyFill`. |
-| Portfolio fields | Mostly implemented | Cash, positions, weights, stop-loss / take-profit on positions and UI; concentration in Go risk engine. |
-| Risk auto vs approval | Implemented | Go `risk.Evaluate` → auto fill or `awaiting_approval` + approval rows with `breach_reasons`. |
+| Five agents / broker boundary | Implemented | `agent-data`, `agent-research`, `agent-decision`, `agent-portfolio`, `agent-risk` in Compose; agents proposal-only; Go submits to Alpaca Paper after risk gate or `bypass_risk`. |
+| Alpaca Paper authority | Implemented (Phase 1 + SSE client) | `AlpacaMarketDataProvider` fetches daily bars; Go `internal/broker` submits market orders; Overview/Portfolio/Orders read Alpaca with short TTL cache; frontend tiered polling + optional JWT SSE quote merge. |
+| Portfolio fields | Mostly implemented | Cash/positions from Alpaca; local `stop_loss` / `take_profit` on positions when mirrored; concentration in Go risk engine. |
+| Risk + execution modes | Implemented | `require_approval`, `auto_reject_breaches`, `bypass_risk`; Go `risk.Evaluate` → submit, approval, or reject per mode. |
 | Compose stack | Present | `deploy/docker-compose.yml` + override: web, api, five agents, postgres, redis. |
 
 **Known gaps (honest, not silent TBD):**
 
-- **Alpaca market data** — `AlpacaMarketDataProvider` is a stub (`NotImplementedError`); default/local path uses `MARKET_DATA_PROVIDER=free` (Yahoo Finance).
+- **Alpaca SSE streaming** — Phase 2 hub + JWT SSE endpoints + web `useMarketStream` are in tree. Default remains `ALPACA_STREAM_ENABLED=false` (REST polling only). To enable: set `ALPACA_STREAM_ENABLED=true` with valid `ALPACA_API_KEY` / `ALPACA_API_SECRET`, restart `api`, then open Overview/Portfolio — quotes merge live when `/api/v1/stream/market` returns `text/event-stream`; on 503 the UI silently keeps tiered polling. Manual smoke: `curl -N -H "Authorization: Bearer $TOKEN" "$API/api/v1/stream/market"` should stream or return `{"error":"streaming disabled"}`.
 - **JWT expiry** — tokens are signed HS256 with `user_id` only; no `exp` claim (acceptable for single-user V1, rotate `JWT_SECRET` to invalidate).
 - **Max drawdown rule** — `max_drawdown` loads into the risk engine config but is **not evaluated** in `risk.Evaluate` (default `0` = disabled); NAV peak / drawdown is not shown in the web UI yet.
-- **Live E2E smoke** — not executed in final gate when Docker daemon unavailable; API integration tests with stubbed agents cover auto-exec and approval paths.
+- **Live E2E smoke** — not executed in final gate when Docker daemon unavailable; API integration tests with stubbed broker cover submit and approval paths.

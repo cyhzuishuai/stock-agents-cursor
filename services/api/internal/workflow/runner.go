@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cyh/stock-agents/services/api/internal/agentsclient"
+	"github.com/cyh/stock-agents/services/api/internal/broker"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
 	"github.com/cyh/stock-agents/services/api/internal/models"
 	"github.com/cyh/stock-agents/services/api/internal/risk"
@@ -43,6 +44,7 @@ type Runner struct {
 	Ledger LedgerAPI
 	Risk   risk.Engine
 	Redis  redis.Cmdable
+	Broker broker.Client // required in production; tests use a fake
 }
 
 type agentRunRequest struct {
@@ -129,11 +131,45 @@ func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun, executionM
 		return err
 	}
 
-	if _, err := r.Ledger.UpsertNAV(ctx, run.TradeDate, marks); err != nil {
+	if err := r.upsertNAV(ctx, run.TradeDate, marks); err != nil {
 		// Status already executed/awaiting_approval — do not overwrite to failed.
 		return fmt.Errorf("upsert nav: %w", err)
 	}
 	return nil
+}
+
+func (r *Runner) upsertNAV(ctx context.Context, tradeDate string, marks map[string]float64) error {
+	if r.Broker != nil {
+		acct, err := r.Broker.GetAccount(ctx)
+		if err == nil {
+			cash := acct.Cash
+			nav := acct.Equity
+			if nav == 0 && acct.PortfolioValue > 0 {
+				nav = acct.PortfolioValue
+			}
+			equity := nav - cash
+			if equity < 0 {
+				equity = 0
+			}
+			snap := models.NavSnapshot{
+				TradeDate: tradeDate,
+				Cash:      cash,
+				Equity:    equity,
+				Nav:       nav,
+			}
+			var existing models.NavSnapshot
+			if err := r.DB.WithContext(ctx).Where("trade_date = ?", tradeDate).Limit(1).Find(&existing).Error; err != nil {
+				return err
+			}
+			if existing.ID == 0 {
+				return r.DB.WithContext(ctx).Create(&snap).Error
+			}
+			snap.ID = existing.ID
+			return r.DB.WithContext(ctx).Save(&snap).Error
+		}
+	}
+	_, err := r.Ledger.UpsertNAV(ctx, tradeDate, marks)
+	return err
 }
 
 func isPostFillStatus(status string) bool {
@@ -272,6 +308,8 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 		}
 	}
 
+	marks = r.mergeBrokerMarks(ctx, marks)
+
 	state, err := r.portfolioState(ctx, account.ID, marks)
 	if err != nil {
 		return nil, false, err
@@ -301,53 +339,80 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 			}
 			continue
 		}
-		fillPrice, ok := marks[p.Symbol]
-		if !ok || fillPrice <= 0 {
+		markPrice, ok := marks[p.Symbol]
+		if !ok || markPrice <= 0 {
 			return nil, anyFill, fmt.Errorf("missing close for symbol %s", p.Symbol)
 		}
-		// Gate math must use qty×close, not agent-estimated notional/cash impact.
-		notional, cashImpact := fillNotionalAndCashImpact(p.Side, p.Qty, fillPrice)
-		decision := r.Risk.Evaluate(state, risk.Proposal{
-			Symbol:              p.Symbol,
-			Side:                p.Side,
-			Qty:                 p.Qty,
-			EstimatedNotional:   notional,
-			EstimatedCashImpact: cashImpact,
-			FillPrice:           fillPrice,
-		})
-		if decision.AutoExecute {
-			runID := run.ID
-			if _, err := r.Ledger.ApplyFill(ctx, ledger.FillRequest{
-				AccountID:  account.ID,
-				RunID:      &runID,
-				Symbol:     p.Symbol,
-				Side:       p.Side,
-				Qty:        p.Qty,
-				FillPrice:  fillPrice,
-				TradeDate:  run.TradeDate,
-				StopLoss:   p.StopLoss,
-				TakeProfit: p.TakeProfit,
-			}); err != nil {
-				return nil, anyFill, fmt.Errorf("apply fill %s: %w", p.Symbol, err)
+
+		allowSubmit := false
+		if executionMode == ExecutionModeBypassRisk {
+			allowSubmit = p.Qty > 0
+		} else {
+			// Gate math must use qty×mark, not agent-estimated notional/cash impact.
+			// Marks are for risk gate only — never used as fill price.
+			notional, cashImpact := fillNotionalAndCashImpact(p.Side, p.Qty, markPrice)
+			decision := r.Risk.Evaluate(state, risk.Proposal{
+				Symbol:              p.Symbol,
+				Side:                p.Side,
+				Qty:                 p.Qty,
+				EstimatedNotional:   notional,
+				EstimatedCashImpact: cashImpact,
+				FillPrice:           markPrice,
+			})
+			if decision.AutoExecute {
+				allowSubmit = true
+			} else {
+				reasons, err := json.Marshal(decision.BreachReasons)
+				if err != nil {
+					return nil, anyFill, err
+				}
+				if executionMode == ExecutionModeAutoReject {
+					p.Status = ProposalRejected
+					p.BreachReasonsJSON = string(reasons)
+					if err := r.DB.WithContext(ctx).Model(p).Updates(map[string]any{
+						"status":              ProposalRejected,
+						"breach_reasons_json": string(reasons),
+					}).Error; err != nil {
+						return nil, anyFill, err
+					}
+					continue
+				}
+
+				approval := models.Approval{
+					ProposalID:        p.ID,
+					Status:            ApprovalPending,
+					BreachReasonsJSON: string(reasons),
+				}
+				if err := r.DB.WithContext(ctx).Create(&approval).Error; err != nil {
+					return nil, anyFill, fmt.Errorf("create approval: %w", err)
+				}
+				p.Status = ProposalAwaitingApproval
+				if err := r.DB.WithContext(ctx).Model(p).Update("status", ProposalAwaitingApproval).Error; err != nil {
+					return nil, anyFill, err
+				}
+				pendingApprovals = true
+				continue
 			}
-			anyFill = true
-			p.Status = ProposalFilled
-			if err := r.DB.WithContext(ctx).Model(p).Update("status", ProposalFilled).Error; err != nil {
-				return nil, true, err
-			}
-			// Refresh state for subsequent proposals in the same run.
-			state, err = r.portfolioState(ctx, account.ID, marks)
-			if err != nil {
-				return nil, true, err
-			}
+		}
+
+		if !allowSubmit {
 			continue
 		}
 
-		reasons, err := json.Marshal(decision.BreachReasons)
-		if err != nil {
-			return nil, anyFill, err
+		if r.Broker == nil {
+			return nil, anyFill, ErrBrokerNotConfigured
 		}
-		if executionMode == ExecutionModeAutoReject {
+
+		if err := r.submitAndSync(ctx, account.ID, run, p); err != nil {
+			if !errors.Is(err, ErrSubmitOrder) {
+				// Post-submit sync failure (mirror/GetOrder): leave proposal as submitted
+				// for reconciliation; fail the run instead of treating it as a reject.
+				return nil, anyFill, err
+			}
+			reasons, mErr := json.Marshal([]string{fmt.Sprintf("broker: %v", err)})
+			if mErr != nil {
+				return nil, anyFill, mErr
+			}
 			p.Status = ProposalRejected
 			p.BreachReasonsJSON = string(reasons)
 			if err := r.DB.WithContext(ctx).Model(p).Updates(map[string]any{
@@ -358,20 +423,14 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 			}
 			continue
 		}
-
-		approval := models.Approval{
-			ProposalID:        p.ID,
-			Status:            ApprovalPending,
-			BreachReasonsJSON: string(reasons),
+		if p.Status == ProposalFilled {
+			anyFill = true
 		}
-		if err := r.DB.WithContext(ctx).Create(&approval).Error; err != nil {
-			return nil, anyFill, fmt.Errorf("create approval: %w", err)
-		}
-		p.Status = ProposalAwaitingApproval
-		if err := r.DB.WithContext(ctx).Model(p).Update("status", ProposalAwaitingApproval).Error; err != nil {
+		// Refresh state for subsequent proposals in the same run.
+		state, err = r.portfolioState(ctx, account.ID, marks)
+		if err != nil {
 			return nil, anyFill, err
 		}
-		pendingApprovals = true
 	}
 
 	finalStatus := StatusExecuted
@@ -479,6 +538,9 @@ func (r *Runner) loadCanHoldMap(ctx context.Context) (map[string]bool, error) {
 }
 
 func (r *Runner) portfolioState(ctx context.Context, accountID uint, marks map[string]float64) (risk.PortfolioState, error) {
+	if r.Broker != nil {
+		return r.portfolioStateFromBroker(ctx, marks)
+	}
 	var account models.Account
 	if err := r.DB.WithContext(ctx).First(&account, accountID).Error; err != nil {
 		return risk.PortfolioState{}, err
@@ -504,6 +566,60 @@ func (r *Runner) portfolioState(ctx context.Context, accountID uint, marks map[s
 		Positions: posMap,
 		Marks:     marks,
 	}, nil
+}
+
+func (r *Runner) portfolioStateFromBroker(ctx context.Context, marks map[string]float64) (risk.PortfolioState, error) {
+	acct, err := r.Broker.GetAccount(ctx)
+	if err != nil {
+		return risk.PortfolioState{}, err
+	}
+	positions, err := r.Broker.ListPositions(ctx)
+	if err != nil {
+		return risk.PortfolioState{}, err
+	}
+	merged := copyMarks(marks)
+	posMap := make(map[string]float64, len(positions))
+	for _, p := range positions {
+		posMap[p.Symbol] = p.Qty
+		if p.CurrentPrice > 0 {
+			merged[p.Symbol] = p.CurrentPrice
+		}
+	}
+	equity := acct.Equity
+	if equity == 0 && acct.PortfolioValue > 0 {
+		equity = acct.PortfolioValue
+	}
+	return risk.PortfolioState{
+		Cash:      acct.Cash,
+		Equity:    equity,
+		Positions: posMap,
+		Marks:     merged,
+	}, nil
+}
+
+func (r *Runner) mergeBrokerMarks(ctx context.Context, marks map[string]float64) map[string]float64 {
+	out := copyMarks(marks)
+	if r.Broker == nil {
+		return out
+	}
+	positions, err := r.Broker.ListPositions(ctx)
+	if err != nil {
+		return out
+	}
+	for _, p := range positions {
+		if p.CurrentPrice > 0 {
+			out[p.Symbol] = p.CurrentPrice
+		}
+	}
+	return out
+}
+
+func copyMarks(marks map[string]float64) map[string]float64 {
+	out := make(map[string]float64, len(marks))
+	for k, v := range marks {
+		out[k] = v
+	}
+	return out
 }
 
 func (r *Runner) persistStep(ctx context.Context, runID uint, step, status, payload string) error {

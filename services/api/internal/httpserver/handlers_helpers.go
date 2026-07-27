@@ -2,14 +2,14 @@ package httpserver
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/cyh/stock-agents/services/api/internal/approvals"
+	"github.com/cyh/stock-agents/services/api/internal/broker"
 	"github.com/cyh/stock-agents/services/api/internal/config"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
-	"github.com/cyh/stock-agents/services/api/internal/models"
 	"github.com/cyh/stock-agents/services/api/internal/strategy"
+	"github.com/cyh/stock-agents/services/api/internal/stream"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -41,6 +41,8 @@ type RouterDeps struct {
 	Strategies *strategy.Service
 	Scheduler  SchedulerReloader
 	HTTPClient *http.Client
+	Broker     broker.Client
+	Stream     *stream.Hub
 }
 
 // API holds shared handler dependencies.
@@ -54,48 +56,16 @@ type API struct {
 	Strategies *strategy.Service
 	Scheduler  SchedulerReloader
 	HTTPClient *http.Client
+	Broker     broker.Client
+	Stream     *stream.Hub
 }
 
-func (h *API) loadAccount(c *gin.Context) (models.Account, error) {
-	var account models.Account
-	err := h.DB.WithContext(c.Request.Context()).First(&account).Error
-	return account, err
-}
-
-func (h *API) latestMarks(ctx context.Context) map[string]float64 {
-	marks := map[string]float64{}
-	var run models.WorkflowRun
-	if err := h.DB.WithContext(ctx).Order("id DESC").First(&run).Error; err != nil {
-		return marks
+func (h *API) requireBroker(c *gin.Context) bool {
+	if h.Broker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "alpaca not configured"})
+		return false
 	}
-	var step models.WorkflowStepResult
-	if err := h.DB.WithContext(ctx).
-		Where("run_id = ? AND step = ?", run.ID, workflow.StepData).
-		First(&step).Error; err != nil {
-		return marks
-	}
-	var data struct {
-		Bars []struct {
-			Symbol string  `json:"symbol"`
-			Close  float64 `json:"close"`
-		} `json:"bars"`
-	}
-	if err := json.Unmarshal([]byte(step.PayloadJSON), &data); err != nil {
-		return marks
-	}
-	for _, b := range data.Bars {
-		if b.Symbol != "" {
-			marks[b.Symbol] = b.Close
-		}
-	}
-	return marks
-}
-
-func markOrCost(marks map[string]float64, p models.Position) float64 {
-	if m, ok := marks[p.Symbol]; ok && m > 0 {
-		return m
-	}
-	return p.AvgCost
+	return true
 }
 
 func (h *API) triggerEOD(c *gin.Context, tradeDate string, force bool) {

@@ -11,48 +11,47 @@ import (
 )
 
 func (h *API) Overview(c *gin.Context) {
-	account, err := h.loadAccount(c)
+	if !h.requireBroker(c) {
+		return
+	}
+
+	acct, err := h.Broker.GetAccount(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	positions, err := h.Broker.ListPositions(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	marks := h.latestMarks(c.Request.Context())
-	var positions []models.Position
-	if err := h.DB.WithContext(c.Request.Context()).Where("account_id = ?", account.ID).Find(&positions).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	cash := acct.Cash
+	nav := acct.Equity
+	if nav == 0 && acct.PortfolioValue > 0 {
+		nav = acct.PortfolioValue
+	}
+	equity := nav - cash
+	if equity < 0 {
+		equity = 0
 	}
 
-	cash := account.Cash
-	var equity float64
 	summary := make([]gin.H, 0, len(positions))
 	for _, p := range positions {
-		price, ok := marks[p.Symbol]
-		if !ok || price <= 0 {
-			summary = append(summary, gin.H{
-				"symbol":       p.Symbol,
-				"qty":          p.Qty,
-				"market_value": 0.0,
-				"weight":       0.0,
-			})
-			continue
+		mv := p.MarketValue
+		if mv == 0 && p.CurrentPrice > 0 {
+			mv = p.Qty * p.CurrentPrice
 		}
-		mv := p.Qty * price
-		equity += mv
+		weight := 0.0
+		if nav > 0 {
+			weight = mv / nav
+		}
 		summary = append(summary, gin.H{
 			"symbol":       p.Symbol,
 			"qty":          p.Qty,
 			"market_value": mv,
-			"weight":       0.0,
+			"weight":       weight,
 		})
-	}
-	nav := cash + equity
-	if nav > 0 {
-		for i := range summary {
-			mv := summary[i]["market_value"].(float64)
-			summary[i]["weight"] = mv / nav
-		}
 	}
 
 	var pendingCount int64

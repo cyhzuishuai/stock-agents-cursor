@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cyh/stock-agents/services/api/internal/agentsclient"
+	"github.com/cyh/stock-agents/services/api/internal/broker"
 	"github.com/cyh/stock-agents/services/api/internal/config"
 	"github.com/cyh/stock-agents/services/api/internal/db"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
@@ -22,6 +24,98 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
+
+type fakeBroker struct {
+	mu      sync.Mutex
+	submit  func(broker.OrderRequest) (broker.Order, error)
+	get     map[string]broker.Order
+	getErr  error
+	acct    broker.Account
+	pos     []broker.Position
+	acctErr         error
+	acctFailAfter   int // GetAccount succeeds this many times, then returns acctErr
+	getAccountCalls int
+
+	submitCalls []broker.OrderRequest
+	nextID      int
+}
+
+func (f *fakeBroker) GetAccount(ctx context.Context) (broker.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.acctFailAfter > 0 {
+		f.getAccountCalls++
+		if f.getAccountCalls > f.acctFailAfter {
+			if f.acctErr != nil {
+				return broker.Account{}, f.acctErr
+			}
+			return broker.Account{}, errors.New("account unavailable")
+		}
+		return f.acct, nil
+	}
+	if f.acctErr != nil {
+		return broker.Account{}, f.acctErr
+	}
+	return f.acct, nil
+}
+
+func (f *fakeBroker) ListPositions(ctx context.Context) ([]broker.Position, error) {
+	return f.pos, nil
+}
+
+func (f *fakeBroker) SubmitOrder(ctx context.Context, req broker.OrderRequest) (broker.Order, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.submitCalls = append(f.submitCalls, req)
+	if f.submit != nil {
+		return f.submit(req)
+	}
+	f.nextID++
+	id := fmt.Sprintf("brk-%d", f.nextID)
+	o := broker.Order{
+		ID:             id,
+		ClientOrderID:  req.ClientOrderID,
+		Symbol:         req.Symbol,
+		Side:           req.Side,
+		Qty:            req.Qty,
+		FilledQty:      req.Qty,
+		FilledAvgPrice: 191,
+		Status:         "filled",
+	}
+	if f.get == nil {
+		f.get = map[string]broker.Order{}
+	}
+	f.get[id] = o
+	return o, nil
+}
+
+func (f *fakeBroker) GetOrder(ctx context.Context, brokerOrderID string) (broker.Order, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.getErr != nil {
+		return broker.Order{}, f.getErr
+	}
+	if o, ok := f.get[brokerOrderID]; ok {
+		return o, nil
+	}
+	return broker.Order{}, fmt.Errorf("order not found: %s", brokerOrderID)
+}
+
+func (f *fakeBroker) ListOrders(ctx context.Context, status string) ([]broker.Order, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]broker.Order, 0, len(f.get))
+	for _, o := range f.get {
+		out = append(out, o)
+	}
+	return out, nil
+}
+
+func (f *fakeBroker) submitCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.submitCalls)
+}
 
 const tradeDate = "2026-07-22"
 
@@ -94,8 +188,15 @@ func TestRunEODHappyPathAutoExecBuy(t *testing.T) {
 	if err := env.db.First(&account).Error; err != nil {
 		t.Fatalf("account: %v", err)
 	}
-	if account.Cash != 100000-1910 {
-		t.Fatalf("cash: got %v want %v", account.Cash, 100000-1910)
+	// Local ledger cash is unchanged — Alpaca Paper is fill authority.
+	if account.Cash != 100000 {
+		t.Fatalf("cash: got %v want %v (ledger must not ApplyFill)", account.Cash, 100000)
+	}
+	if env.broker.submitCount() != 1 {
+		t.Fatalf("SubmitOrder calls: got %d want 1", env.broker.submitCount())
+	}
+	if orders[0].BrokerOrderID == "" || orders[0].ClientOrderID == "" {
+		t.Fatalf("order mirror missing broker ids: %+v", orders[0])
 	}
 
 	var nav models.NavSnapshot
@@ -426,7 +527,7 @@ func TestRunEODAutoRejectBreachesRejectsProposalNoApproval(t *testing.T) {
 func TestRunEODMidFillFailureSetsTerminalFailed(t *testing.T) {
 	// First symbol auto-fills; second symbol missing close → post-fill terminal status.
 	env := setupRunnerEnv(t, stubResponses{
-		data: `{"bars":[{"symbol":"AAPL","trade_date":"2026-07-22","open":190,"high":192,"low":188,"close":191,"volume":1000000}],"warnings":[]}`,
+		data:      `{"bars":[{"symbol":"AAPL","trade_date":"2026-07-22","open":190,"high":192,"low":188,"close":191,"volume":1000000}],"warnings":[]}`,
 		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
 		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
 		portfolio: `{"proposals":[{"symbol":"AAPL","side":"buy","qty":10,"estimated_notional":1910,"estimated_cash_impact":-1910},{"symbol":"MSFT","side":"buy","qty":5,"estimated_notional":1000,"estimated_cash_impact":-1000}],"warnings":[]}`,
@@ -567,6 +668,9 @@ func TestRunEODNAVFailurePreservesExecutedStatus(t *testing.T) {
 	})
 	inner := env.runner.Ledger.(*ledger.Service)
 	env.runner.Ledger = &failingNAVLedger{Service: inner, err: errors.New("nav boom")}
+	// Broker submit still works; GetAccount fails on upsertNAV so it falls through to ledger.
+	env.broker.acctErr = errors.New("account unavailable")
+	env.broker.acctFailAfter = 2 // portfolioState before + after fill succeed; upsertNAV fails
 
 	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
 	if err == nil {
@@ -607,6 +711,7 @@ type stubResponses struct {
 type runnerEnv struct {
 	db     *gorm.DB
 	runner *workflow.Runner
+	broker *fakeBroker
 }
 
 func setupRunnerEnv(t *testing.T, stubs stubResponses) *runnerEnv {
@@ -642,6 +747,10 @@ func setupRunnerEnv(t *testing.T, stubs stubResponses) *runnerEnv {
 
 	servers := startAgentStubs(t, stubs)
 
+	fb := &fakeBroker{
+		acct: broker.Account{ID: "paper", Cash: 100000, Equity: 100000, PortfolioValue: 100000},
+		get:  map[string]broker.Order{},
+	}
 	runner := &workflow.Runner{
 		DB: gormDB,
 		Agents: &agentsclient.Client{
@@ -658,9 +767,10 @@ func setupRunnerEnv(t *testing.T, stubs stubResponses) *runnerEnv {
 			"max_single_name_weight": 0.20,
 			"min_cash_ratio":         0.10,
 		}),
-		Redis: rdb,
+		Redis:  rdb,
+		Broker: fb,
 	}
-	return &runnerEnv{db: gormDB, runner: runner}
+	return &runnerEnv{db: gormDB, runner: runner, broker: fb}
 }
 
 type agentServers struct {
@@ -750,6 +860,9 @@ func TestRunEODBuyRejectedWhenNotHoldable(t *testing.T) {
 	if orders != 0 {
 		t.Fatalf("orders: got %d want 0", orders)
 	}
+	if env.broker.submitCount() != 0 {
+		t.Fatalf("SubmitOrder calls: got %d want 0", env.broker.submitCount())
+	}
 }
 
 func TestRunEODSellAllowedWhenNotHoldable(t *testing.T) {
@@ -763,18 +876,9 @@ func TestRunEODSellAllowedWhenNotHoldable(t *testing.T) {
 	if err := env.db.Model(&models.WatchlistSymbol{}).Where("symbol = ?", "AAPL").Update("can_hold", false).Error; err != nil {
 		t.Fatalf("set can_hold: %v", err)
 	}
-	var account models.Account
-	if err := env.db.First(&account).Error; err != nil {
-		t.Fatalf("account: %v", err)
-	}
-	if err := env.db.Create(&models.Position{
-		AccountID: account.ID,
-		Symbol:    "AAPL",
-		Qty:       10,
-		AvgCost:   180,
-	}).Error; err != nil {
-		t.Fatalf("seed position: %v", err)
-	}
+	// Broker is fill authority — seed position on fake broker, not local ledger ApplyFill.
+	env.broker.pos = []broker.Position{{Symbol: "AAPL", Qty: 10, AvgCost: 180, CurrentPrice: 191}}
+	env.broker.acct = broker.Account{ID: "paper", Cash: 80890, Equity: 100000, PortfolioValue: 100000}
 
 	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
 	if err != nil {
@@ -790,5 +894,328 @@ func TestRunEODSellAllowedWhenNotHoldable(t *testing.T) {
 	}
 	if strings.Contains(proposals[0].BreachReasonsJSON, "not_holdable") {
 		t.Fatalf("sell should not be rejected as not_holdable: %q", proposals[0].BreachReasonsJSON)
+	}
+	if env.broker.submitCount() != 1 {
+		t.Fatalf("SubmitOrder calls: got %d want 1", env.broker.submitCount())
+	}
+
+	var account models.Account
+	if err := env.db.First(&account).Error; err != nil {
+		t.Fatalf("account: %v", err)
+	}
+	if account.Cash != 100000 {
+		t.Fatalf("cash: got %v want %v (ledger must not ApplyFill)", account.Cash, 100000)
+	}
+}
+
+func TestRunEODBypassRiskSubmitsWithoutRisk(t *testing.T) {
+	// qty*close = 100*191 = 19100 > max_order_notional 10000 — would always breach.
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioBuyJSON(100, 19100, -19100),
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"review"}],"warnings":[]}`,
+	})
+
+	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+		TradeDate:     tradeDate,
+		ExecutionMode: workflow.ExecutionModeBypassRisk,
+	})
+	if err != nil {
+		t.Fatalf("RunEOD: %v", err)
+	}
+
+	if env.broker.submitCount() != 1 {
+		t.Fatalf("SubmitOrder calls: got %d want 1", env.broker.submitCount())
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 1 || proposals[0].Status != workflow.ProposalFilled {
+		t.Fatalf("proposal: %+v", proposals)
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusExecuted {
+		t.Fatalf("run status: got %q want executed", run.Status)
+	}
+}
+
+func TestRunEODAutoRejectStillRejects(t *testing.T) {
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioBuyJSON(100, 19100, -19100),
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"review"}],"warnings":[]}`,
+	})
+
+	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+		TradeDate:     tradeDate,
+		ExecutionMode: workflow.ExecutionModeAutoReject,
+	})
+	if err != nil {
+		t.Fatalf("RunEOD: %v", err)
+	}
+
+	if env.broker.submitCount() != 0 {
+		t.Fatalf("SubmitOrder calls: got %d want 0", env.broker.submitCount())
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 1 || proposals[0].Status != workflow.ProposalRejected {
+		t.Fatalf("proposal: %+v", proposals)
+	}
+}
+
+func TestRunEODRequireApprovalDoesNotSubmit(t *testing.T) {
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioBuyJSON(100, 19100, -19100),
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"review"}],"warnings":[]}`,
+	})
+
+	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+		TradeDate:     tradeDate,
+		ExecutionMode: workflow.ExecutionModeRequireApproval,
+	})
+	if err != nil {
+		t.Fatalf("RunEOD: %v", err)
+	}
+
+	if env.broker.submitCount() != 0 {
+		t.Fatalf("SubmitOrder calls: got %d want 0", env.broker.submitCount())
+	}
+
+	var approvals []models.Approval
+	if err := env.db.Find(&approvals).Error; err != nil {
+		t.Fatalf("approvals: %v", err)
+	}
+	if len(approvals) != 1 || approvals[0].Status != workflow.ApprovalPending {
+		t.Fatalf("approval: %+v", approvals)
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusAwaitingApproval {
+		t.Fatalf("run status: got %q want awaiting_approval", run.Status)
+	}
+}
+
+func TestRunEODPassSubmitsToBroker(t *testing.T) {
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioBuyJSON(10, 1910, -1910),
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{"liquidity":0.9},"suggested_action":"auto"}],"warnings":[]}`,
+	})
+
+	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+		TradeDate:     tradeDate,
+		ExecutionMode: workflow.ExecutionModeRequireApproval,
+	})
+	if err != nil {
+		t.Fatalf("RunEOD: %v", err)
+	}
+
+	if env.broker.submitCount() != 1 {
+		t.Fatalf("SubmitOrder calls: got %d want 1", env.broker.submitCount())
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 1 || proposals[0].Status != workflow.ProposalFilled {
+		t.Fatalf("proposal: %+v", proposals)
+	}
+
+	var orders []models.Order
+	if err := env.db.Find(&orders).Error; err != nil {
+		t.Fatalf("orders: %v", err)
+	}
+	if len(orders) != 1 {
+		t.Fatalf("orders: got %d want 1", len(orders))
+	}
+	if orders[0].BrokerOrderID == "" || orders[0].FillPrice != 191 || orders[0].Status != "filled" {
+		t.Fatalf("order mirror: %+v", orders[0])
+	}
+}
+
+func TestRunEODNilBrokerWithSubmitFailsRun(t *testing.T) {
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioBuyJSON(10, 1910, -1910),
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{},"suggested_action":"auto"}],"warnings":[]}`,
+	})
+	env.runner.Broker = nil
+
+	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+		TradeDate:     tradeDate,
+		ExecutionMode: workflow.ExecutionModeBypassRisk,
+	})
+	if err == nil {
+		t.Fatal("expected error when broker is nil and proposals would submit")
+	}
+	if !errors.Is(err, workflow.ErrBrokerNotConfigured) {
+		t.Fatalf("error: got %v want ErrBrokerNotConfigured", err)
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusFailed {
+		t.Fatalf("run status: got %q want failed (not executed)", run.Status)
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	for _, p := range proposals {
+		if p.Status == workflow.ProposalRejected {
+			t.Fatalf("proposal must not be individually rejected when broker is nil: %+v", p)
+		}
+	}
+}
+
+func TestRunEODSubmitOrderErrorRejectsAndContinues(t *testing.T) {
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: `{"proposals":[{"symbol":"AAPL","side":"buy","qty":5,"estimated_notional":955,"estimated_cash_impact":-955},{"symbol":"AAPL","side":"buy","qty":5,"estimated_notional":955,"estimated_cash_impact":-955}],"warnings":[]}`,
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{},"suggested_action":"auto"}],"warnings":[]}`,
+	})
+
+	var submitN int
+	env.broker.submit = func(req broker.OrderRequest) (broker.Order, error) {
+		submitN++
+		if submitN == 1 {
+			return broker.Order{}, errors.New("insufficient buying power")
+		}
+		// Called under fakeBroker.mu — do not re-lock.
+		env.broker.nextID++
+		id := fmt.Sprintf("brk-%d", env.broker.nextID)
+		o := broker.Order{
+			ID:             id,
+			ClientOrderID:  req.ClientOrderID,
+			Symbol:         req.Symbol,
+			Side:           req.Side,
+			Qty:            req.Qty,
+			FilledQty:      req.Qty,
+			FilledAvgPrice: 191,
+			Status:         "filled",
+		}
+		if env.broker.get == nil {
+			env.broker.get = map[string]broker.Order{}
+		}
+		env.broker.get[id] = o
+		return o, nil
+	}
+
+	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+		TradeDate:     tradeDate,
+		ExecutionMode: workflow.ExecutionModeBypassRisk,
+	})
+	if err != nil {
+		t.Fatalf("RunEOD: %v", err)
+	}
+	if env.broker.submitCount() != 2 {
+		t.Fatalf("SubmitOrder calls: got %d want 2", env.broker.submitCount())
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Order("id").Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 2 {
+		t.Fatalf("proposals: got %d want 2", len(proposals))
+	}
+	if proposals[0].Status != workflow.ProposalRejected {
+		t.Fatalf("first proposal: got %s want rejected", proposals[0].Status)
+	}
+	if !strings.Contains(proposals[0].BreachReasonsJSON, "broker:") {
+		t.Fatalf("first proposal reasons: %s", proposals[0].BreachReasonsJSON)
+	}
+	if proposals[1].Status != workflow.ProposalFilled {
+		t.Fatalf("second proposal: got %s want filled", proposals[1].Status)
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusExecuted {
+		t.Fatalf("run status: got %q want executed", run.Status)
+	}
+}
+
+func TestRunEODPostSubmitGetOrderErrorKeepsSubmitted(t *testing.T) {
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioBuyJSON(10, 1910, -1910),
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{},"suggested_action":"auto"}],"warnings":[]}`,
+	})
+	env.broker.getErr = errors.New("alpaca get order unavailable")
+
+	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+		TradeDate:     tradeDate,
+		ExecutionMode: workflow.ExecutionModeBypassRisk,
+	})
+	if err == nil {
+		t.Fatal("expected error from persistent GetOrder failure")
+	}
+	if env.broker.submitCount() != 1 {
+		t.Fatalf("SubmitOrder calls: got %d want 1", env.broker.submitCount())
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 1 {
+		t.Fatalf("proposals: got %d want 1", len(proposals))
+	}
+	if proposals[0].Status != workflow.ProposalSubmitted {
+		t.Fatalf("proposal status: got %q want submitted (must not flip to rejected)", proposals[0].Status)
+	}
+	if proposals[0].BreachReasonsJSON != "" && strings.Contains(proposals[0].BreachReasonsJSON, "broker:") {
+		t.Fatalf("must not store SubmitOrder-style reject reason: %s", proposals[0].BreachReasonsJSON)
+	}
+
+	var orders []models.Order
+	if err := env.db.Find(&orders).Error; err != nil {
+		t.Fatalf("orders: %v", err)
+	}
+	if len(orders) != 1 || orders[0].Status != "submitted" {
+		t.Fatalf("order mirror: %+v", orders)
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusFailed {
+		t.Fatalf("run status: got %q want failed", run.Status)
 	}
 }

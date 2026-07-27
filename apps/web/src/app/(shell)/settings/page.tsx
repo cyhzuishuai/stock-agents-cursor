@@ -367,6 +367,9 @@ function StrategiesPanel() {
                   auto_reject_breaches
                 </option>
                 <option value="require_approval">require_approval</option>
+                <option value="bypass_risk">
+                  bypass_risk (skip Go risk)
+                </option>
               </select>
             </div>
           </div>

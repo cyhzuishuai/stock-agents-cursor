@@ -1,11 +1,15 @@
 # EOD 纸面交易流程图
 
-对应设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`。策略调度与可观测性见 `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`。
+对应设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`。  
+**现金 / 持仓 / 订单权威**：`docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`（Phase 1 已落地）。  
+策略调度与可观测性见 `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`。
 
-## 策略驱动调度与 auto_reject
+## 策略驱动调度与 execution_mode
 
 - **Cadence**：由当前**激活策略**决定，不再依赖固定单一 cron。默认含 **pre-open**（常规开盘前，如 09:20 ET）与 **intraday**（盘中定时，如 10:00–15:00 每小时）两类触发；调度器随策略切换热重载。
-- **`auto_reject_breaches`**：当策略 `execution_mode` 为此值时，Go 风控超限**不创建**待审 approval，提案直接标记 `rejected`；无其余待审项时 run 仍可终态为 `executed`（无需人工审批）。
+- **`require_approval`**：Go 风控超限 → 创建 approval；人工 `approved` 后向 Alpaca Paper 提交订单。
+- **`auto_reject_breaches`**：Go 风控超限**不创建** approval，提案直接 `rejected`；无其余待审项时 run 仍可终态为 `executed`。
+- **`bypass_risk`**：跳过 Go 风控；可执行提案直接向 Alpaca Paper 提交市价单。
 
 ## 1. 系统总览
 
@@ -15,12 +19,19 @@ flowchart TB
     Web[Next.js Web]
   end
 
-  subgraph api [Go API — 权威边界]
+  subgraph api [Go API — 编排与网关]
     Auth[JWT Auth]
     WF[EOD 工作流编排]
     RiskGo[确定性风控引擎]
-    Ledger[纸面账本]
+    Broker[Alpaca Paper 客户端]
     Approvals[审批 API]
+    Mirror[(Postgres 镜像<br/>runs/proposals/orders)]
+  end
+
+  subgraph alpaca [Alpaca Paper — 权威]
+    AlpAcct[账户 / 现金 / 权益]
+    AlpPos[持仓]
+    AlpOrd[订单 / 成交]
   end
 
   subgraph agents [Python Agents — 只读提案]
@@ -41,16 +52,20 @@ flowchart TB
   Web --> Auth
   Auth --> WF
   Auth --> Approvals
-  Approvals --> Ledger
+  Approvals --> Broker
   WF --> Data
   WF --> Research
   WF --> Decision
   WF --> Portfolio
   WF --> RiskPy
   WF --> RiskGo
-  RiskGo -->|通过| Ledger
+  RiskGo -->|通过 / bypass| Broker
   RiskGo -->|超限| Approvals
-  Ledger --> PG
+  Broker --> AlpAcct
+  Broker --> AlpPos
+  Broker --> AlpOrd
+  Broker --> Mirror
+  Mirror --> PG
   WF --> PG
   WF --> Redis
   Data --> MD
@@ -61,9 +76,10 @@ flowchart TB
 
 信任边界：
 
-- Agents **永不**写入现金 / 持仓 / 订单。
-- 只有 Go API 在 `auto_execute` 或审批 `approved` 后提交账本变更。
-- Python Risk 输出仅供审计；Go 规则引擎为最终判定。
+- Agents **永不**调用 Alpaca Trading API，也不写入现金 / 持仓 / 订单。
+- **Alpaca Paper** 为现金、持仓、订单与成交价的权威；Go API 是唯一与 Alpaca Trading 交互的组件。
+- Go 在风控通过、`bypass_risk` 或审批 `approved` 后向 Alpaca 提交市价单；Postgres 仅存 runs / proposals / approvals 及订单镜像（审计）。
+- Python Risk 输出仅供审计；Go 规则引擎为最终判定（`bypass_risk` 时跳过）。
 
 ## 2. 日终主流程
 
@@ -79,22 +95,27 @@ flowchart TD
   S3 --> S4[4. agent-portfolio<br/>可执行提案 qty/权重/止盈止损]
   S4 --> S5[5. agent-risk<br/>flags / scores / auto|review]
 
-  S5 --> Eval[Go 风控逐笔评估<br/>risk_rule_configs]
+  S5 --> Mode{execution_mode}
+  Mode -->|bypass_risk| Submit[向 Alpaca 提交市价单<br/>client_order_id = proposal.id]
+  Mode -->|require_approval / auto_reject| Eval[Go 风控逐笔评估<br/>risk_rule_configs]
 
   Eval --> Split{每笔提案}
-  Split -->|全部规则通过| AutoFill[纸面成交<br/>EOD close 价]
-  Split -->|任一规则失败| Pend[创建 approval<br/>breach_reasons]
+  Split -->|全部规则通过| Submit
+  Split -->|超限 + auto_reject| Reject[提案 rejected]
+  Split -->|超限 + require_approval| Pend[创建 approval<br/>breach_reasons]
 
-  AutoFill --> Terminal{是否还有待审批?}
+  Submit --> Sync[REST 轮询订单状态<br/>直至 terminal 或超时]
+  Sync --> Filled[proposal filled / rejected / canceled]
+  Reject --> Terminal{是否还有待审批?}
   Pend --> Terminal
+  Filled --> Terminal
   Terminal -->|有| Await[run = awaiting_approval]
   Terminal -->|无| Done[run = executed]
 
-  AutoFill --> NAV[upsert nav_snapshots]
-  Done --> NAV
+  Done --> NAV[可选 NAV 快照<br/>Alpaca 权益]
   Await --> NAV
 
-  S1 -.->|schema/infra 失败| Fail[run = failed<br/>无账本写入]
+  S1 -.->|schema/infra 失败| Fail[run = failed<br/>无 Alpaca 提交]
   S2 -.-> Fail
   S3 -.-> Fail
   S4 -.-> Fail
@@ -107,17 +128,22 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-  P[trade_proposal] --> G{Go 规则}
-  G -->|通过| F[纸面 fill<br/>更新 cash/positions/orders]
-  G -->|不通过 + review 模式| A[approval 待审]
-  G -->|不通过 + auto_reject| R[提案 rejected<br/>不改账本]
+  P[trade_proposal] --> M{execution_mode}
+  M -->|bypass_risk| S[提交 Alpaca 市价单]
+  M -->|其他| G{Go 规则}
+  G -->|通过| S
+  G -->|不通过 + require_approval| A[approval 待审]
+  G -->|不通过 + auto_reject| R[提案 rejected<br/>不提交]
+
+  S --> Sync[同步 Alpaca 订单状态]
+  Sync --> F[Alpaca 成交<br/>权威更新 cash/positions]
 
   A --> H{人工}
-  H -->|approved| F
-  H -->|rejected| R[提案 rejected<br/>不改账本]
-  H -->|cancel run| C[pending 取消<br/>已成交保留]
+  H -->|approved| S
+  H -->|rejected| R
+  H -->|cancel run| C[pending 取消<br/>已提交订单保留]
 
-  Adv[Python risk 建议<br/>auto/review] -.->|仅审计| G
+  Adv[Python risk 建议] -.->|仅审计| G
 ```
 
 V1 默认规则示例：
@@ -128,7 +154,7 @@ V1 默认规则示例：
 | 单票最大权重 | 20% |
 | 最低现金比例 | 10% |
 
-允许部分自动成交：未超限的订单立刻 fill，超限订单单独等待审批。
+允许部分提交：未超限的提案立刻提交 Alpaca，超限提案按模式 reject 或等待审批。成交价以 Alpaca fill 为准，不再使用本地 EOD close 作为成交权威。
 
 ## 4. Agent 调用链（时序）
 
@@ -161,11 +187,15 @@ sequenceDiagram
   API->>Ri: POST /v1/run
   Ri-->>API: risk_advisory_result
 
-  API->>API: 确定性风控评估
-  alt 通过
-    API->>DB: 纸面成交 + NAV
-  else 超限
+  API->>API: 风控评估（bypass_risk 时跳过）
+  alt 允许提交
+    API->>API: POST Alpaca 市价单
+    API->>API: 轮询订单直至 terminal
+    API->>DB: 镜像 order + 更新 proposal 状态
+  else 超限 + require_approval
     API->>DB: 创建 approvals
+  else 超限 + auto_reject
+    API->>DB: proposal rejected
   end
 ```
 
@@ -175,7 +205,7 @@ sequenceDiagram
 |----------|------|
 | `awaiting_approval` | 至少一笔提案仍待人工处理（其他可能已成交） |
 | `executed` | 无待审；全部提案已成交 / 拒绝 / 取消 |
-| `failed` | Agent / 基础设施 / Schema 失败；**本 run 无账本写入** |
+| `failed` | Agent / 基础设施 / Schema / Alpaca 配置失败；**本 run 无 Alpaca 提交** |
 | `cancelled` | 用户取消；待审取消；本 run 已成交保留 |
 
 `rejected` 是审批/提案状态，不是 run 状态。

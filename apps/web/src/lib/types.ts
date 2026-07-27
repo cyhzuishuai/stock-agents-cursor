@@ -160,7 +160,7 @@ export interface SymbolSearchResult {
 }
 
 // Strategies
-export type ExecutionMode = "auto_reject_breaches" | "require_approval";
+export type ExecutionMode = "auto_reject_breaches" | "require_approval" | "bypass_risk";
 
 export interface Strategy {
   id: number;

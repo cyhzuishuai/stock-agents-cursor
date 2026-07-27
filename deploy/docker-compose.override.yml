@@ -23,7 +23,6 @@ services:
       - "8001:8001"
     environment:
       LLM_MODE: mock
-      MARKET_DATA_PROVIDER: free
 
   agent-research:
     ports:

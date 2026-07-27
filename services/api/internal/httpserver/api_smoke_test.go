@@ -12,6 +12,7 @@ import (
 
 	"github.com/cyh/stock-agents/services/api/internal/approvals"
 	"github.com/cyh/stock-agents/services/api/internal/auth"
+	"github.com/cyh/stock-agents/services/api/internal/broker"
 	"github.com/cyh/stock-agents/services/api/internal/config"
 	"github.com/cyh/stock-agents/services/api/internal/db"
 	"github.com/cyh/stock-agents/services/api/internal/httpserver"
@@ -40,11 +41,59 @@ func (s *stubRunner) RunEOD(_ context.Context, params workflow.RunParams) (uint,
 	return s.runID, nil
 }
 
+type fakeBroker struct {
+	acct      broker.Account
+	positions []broker.Position
+	orders    []broker.Order
+	acctErr   error
+	posErr    error
+	ordersErr error
+}
+
+func (f *fakeBroker) GetAccount(ctx context.Context) (broker.Account, error) {
+	if f.acctErr != nil {
+		return broker.Account{}, f.acctErr
+	}
+	return f.acct, nil
+}
+
+func (f *fakeBroker) ListPositions(ctx context.Context) ([]broker.Position, error) {
+	if f.posErr != nil {
+		return nil, f.posErr
+	}
+	return f.positions, nil
+}
+
+func (f *fakeBroker) SubmitOrder(ctx context.Context, req broker.OrderRequest) (broker.Order, error) {
+	return broker.Order{}, errors.New("not implemented")
+}
+
+func (f *fakeBroker) GetOrder(ctx context.Context, brokerOrderID string) (broker.Order, error) {
+	return broker.Order{}, errors.New("not implemented")
+}
+
+func (f *fakeBroker) ListOrders(ctx context.Context, status string) ([]broker.Order, error) {
+	if f.ordersErr != nil {
+		return nil, f.ordersErr
+	}
+	return f.orders, nil
+}
+
+func defaultFakeBroker() *fakeBroker {
+	return &fakeBroker{
+		acct: broker.Account{Cash: 100000, Equity: 100000, PortfolioValue: 100000},
+	}
+}
+
 func setupAPI(t *testing.T) (*gin.Engine, *gorm.DB, string, *stubRunner, *config.Config) {
-	return setupAPIWithScheduler(t, httpserver.NoopSchedulerReloader{})
+	return setupAPIWithBroker(t, defaultFakeBroker(), httpserver.NoopSchedulerReloader{})
 }
 
 func setupAPIWithScheduler(t *testing.T, scheduler httpserver.SchedulerReloader) (*gin.Engine, *gorm.DB, string, *stubRunner, *config.Config) {
+	return setupAPIWithBroker(t, defaultFakeBroker(), scheduler)
+}
+
+func setupAPIWithBroker(t *testing.T, br broker.Client, scheduler httpserver.SchedulerReloader) (*gin.Engine, *gorm.DB, string, *stubRunner, *config.Config) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -86,6 +135,7 @@ func setupAPIWithScheduler(t *testing.T, scheduler httpserver.SchedulerReloader)
 		Config:     cfg,
 		Strategies: strategiesSvc,
 		Scheduler:  scheduler,
+		Broker:     br,
 	})
 	return router, gormDB, cfg.JWTSecret, runner, cfg
 }
@@ -104,22 +154,15 @@ func bearerToken(t *testing.T, secret string, dbConn *gorm.DB) string {
 }
 
 func TestOverviewLiveNavMatchesWeights(t *testing.T) {
-	router, gormDB, secret, _, _ := setupAPI(t)
+	fb := &fakeBroker{
+		acct: broker.Account{Cash: 50000, Equity: 70000, PortfolioValue: 70000},
+		positions: []broker.Position{{
+			Symbol: "AAPL", Qty: 100, AvgCost: 150, MarketValue: 20000, CurrentPrice: 200, UnrealizedPL: 5000,
+		}},
+	}
+	router, gormDB, secret, _, _ := setupAPIWithBroker(t, fb, httpserver.NoopSchedulerReloader{})
 	token := bearerToken(t, secret, gormDB)
 
-	var account models.Account
-	if err := gormDB.First(&account).Error; err != nil {
-		t.Fatalf("account: %v", err)
-	}
-	account.Cash = 50000
-	if err := gormDB.Save(&account).Error; err != nil {
-		t.Fatalf("save account: %v", err)
-	}
-	if err := gormDB.Create(&models.Position{
-		AccountID: account.ID, Symbol: "AAPL", Qty: 100, AvgCost: 150,
-	}).Error; err != nil {
-		t.Fatalf("create position: %v", err)
-	}
 	if err := gormDB.Create(&models.NavSnapshot{
 		TradeDate: "2026-07-25", Cash: 40000, Equity: 12000, Nav: 52000,
 	}).Error; err != nil {
@@ -128,12 +171,6 @@ func TestOverviewLiveNavMatchesWeights(t *testing.T) {
 	run := models.WorkflowRun{TradeDate: "2026-07-25", Status: workflow.StatusExecuted}
 	if err := gormDB.Create(&run).Error; err != nil {
 		t.Fatalf("create run: %v", err)
-	}
-	if err := gormDB.Create(&models.WorkflowStepResult{
-		RunID: run.ID, Step: workflow.StepData, Status: workflow.StepStatusOK,
-		PayloadJSON: `{"bars":[{"symbol":"AAPL","close":200}]}`,
-	}).Error; err != nil {
-		t.Fatalf("create step: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/overview", nil)
@@ -152,7 +189,7 @@ func TestOverviewLiveNavMatchesWeights(t *testing.T) {
 	equity := resp["equity"].(float64)
 	nav := resp["nav"].(float64)
 	if cash != 50000 {
-		t.Fatalf("cash: got %v want 50000 (live, not snapshot)", cash)
+		t.Fatalf("cash: got %v want 50000 (broker, not ledger)", cash)
 	}
 	if equity != 20000 {
 		t.Fatalf("equity: got %v want 20000", equity)
@@ -170,6 +207,135 @@ func TestOverviewLiveNavMatchesWeights(t *testing.T) {
 	if pos["weight"].(float64) != wantWeight {
 		t.Fatalf("weight: got %v want %v", pos["weight"], wantWeight)
 	}
+	series, ok := resp["nav_series"].([]any)
+	if !ok || len(series) != 1 {
+		t.Fatalf("nav_series: got %v", resp["nav_series"])
+	}
+}
+
+func TestPortfolioFromBrokerMergesStops(t *testing.T) {
+	stop, take := 180.0, 220.0
+	fb := &fakeBroker{
+		acct: broker.Account{Cash: 50000, Equity: 70000, PortfolioValue: 70000},
+		positions: []broker.Position{{
+			Symbol: "AAPL", Qty: 100, AvgCost: 150, MarketValue: 20000, CurrentPrice: 200, UnrealizedPL: 5000,
+		}},
+	}
+	router, gormDB, secret, _, _ := setupAPIWithBroker(t, fb, httpserver.NoopSchedulerReloader{})
+	token := bearerToken(t, secret, gormDB)
+
+	var account models.Account
+	if err := gormDB.First(&account).Error; err != nil {
+		t.Fatalf("account: %v", err)
+	}
+	if err := gormDB.Create(&models.Position{
+		AccountID: account.ID, Symbol: "AAPL", Qty: 1, AvgCost: 1, StopLoss: &stop, TakeProfit: &take,
+	}).Error; err != nil {
+		t.Fatalf("create local position: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/portfolio", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200 body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if resp["cash"].(float64) != 50000 {
+		t.Fatalf("cash: got %v want 50000", resp["cash"])
+	}
+	positions, ok := resp["positions"].([]any)
+	if !ok || len(positions) != 1 {
+		t.Fatalf("positions: got %v", resp["positions"])
+	}
+	p := positions[0].(map[string]any)
+	if p["avg_cost"].(float64) != 150 || p["market_price"].(float64) != 200 {
+		t.Fatalf("price fields: %+v", p)
+	}
+	if p["unrealized_pnl"].(float64) != 5000 {
+		t.Fatalf("unrealized_pnl: got %v want 5000", p["unrealized_pnl"])
+	}
+	if p["stop_loss"].(float64) != 180 || p["take_profit"].(float64) != 220 {
+		t.Fatalf("stops: %+v", p)
+	}
+	wantWeight := 20000.0 / 70000.0
+	if p["weight"].(float64) != wantWeight {
+		t.Fatalf("weight: got %v want %v", p["weight"], wantWeight)
+	}
+}
+
+func TestOrdersFromBrokerMergesProposalID(t *testing.T) {
+	fb := &fakeBroker{
+		acct: broker.Account{Cash: 100000, Equity: 100000},
+		orders: []broker.Order{{
+			ID: "brk-1", ClientOrderID: "42", Symbol: "AAPL", Side: "buy",
+			Qty: 10, FilledQty: 10, FilledAvgPrice: 191, Status: "filled",
+		}},
+	}
+	router, gormDB, secret, _, _ := setupAPIWithBroker(t, fb, httpserver.NoopSchedulerReloader{})
+	token := bearerToken(t, secret, gormDB)
+
+	proposalID := uint(42)
+	if err := gormDB.Create(&models.Order{
+		AccountID: 1, Symbol: "AAPL", Side: "buy", Qty: 10,
+		Status: "filled", BrokerOrderID: "brk-1", ClientOrderID: "42", ProposalID: &proposalID,
+	}).Error; err != nil {
+		t.Fatalf("create mirror: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orders", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200 body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	orders, ok := resp["orders"].([]any)
+	if !ok || len(orders) != 1 {
+		t.Fatalf("orders: got %v", resp["orders"])
+	}
+	o := orders[0].(map[string]any)
+	if o["broker_order_id"] != "brk-1" || o["client_order_id"] != "42" {
+		t.Fatalf("ids: %+v", o)
+	}
+	if o["symbol"] != "AAPL" || o["side"] != "buy" || o["status"] != "filled" {
+		t.Fatalf("fields: %+v", o)
+	}
+	if o["qty"].(float64) != 10 || o["filled_qty"].(float64) != 10 || o["filled_avg_price"].(float64) != 191 {
+		t.Fatalf("qty/fill: %+v", o)
+	}
+	if uint(o["proposal_id"].(float64)) != 42 {
+		t.Fatalf("proposal_id: got %v want 42", o["proposal_id"])
+	}
+}
+
+func TestBrokerNilReturns503(t *testing.T) {
+	router, gormDB, secret, _, _ := setupAPIWithBroker(t, nil, httpserver.NoopSchedulerReloader{})
+	token := bearerToken(t, secret, gormDB)
+	for _, path := range []string{"/api/v1/overview", "/api/v1/portfolio", "/api/v1/orders"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s: status got %d want 503 body=%s", path, w.Code, w.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("%s json: %v", path, err)
+		}
+		if resp["error"] != "alpaca not configured" {
+			t.Fatalf("%s error: got %v", path, resp["error"])
+		}
+	}
 }
 
 func TestProtectedRoutesRequireAuth(t *testing.T) {
@@ -177,6 +343,7 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 	paths := []string{
 		"/api/v1/overview",
 		"/api/v1/portfolio",
+		"/api/v1/orders",
 		"/api/v1/runs",
 		"/api/v1/settings",
 		"/api/v1/strategies",
@@ -235,6 +402,23 @@ func TestOverviewPortfolioRunsSettingsSmoke(t *testing.T) {
 		}
 		if _, ok := resp["positions"]; !ok {
 			t.Fatal("missing positions")
+		}
+	})
+
+	t.Run("orders", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/orders", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status: got %d want 200 body=%s", w.Code, w.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		if _, ok := resp["orders"]; !ok {
+			t.Fatal("missing orders")
 		}
 	})
 

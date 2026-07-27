@@ -38,7 +38,7 @@ services:
     env_file:
       - ./.env
     environment:
-      MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-free}
+      MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-alpaca}
     restart: unless-stopped
 
   agent-research:

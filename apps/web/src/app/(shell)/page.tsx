@@ -4,6 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { OverviewDashboard } from "@/components/OverviewDashboard";
 import { api } from "@/lib/api";
 import type { OverviewResponse } from "@/lib/types";
+import {
+  applyQuoteToOverview,
+  useMarketStream,
+  type QuoteUpdate,
+} from "@/lib/useMarketStream";
+import { useTieredPolling } from "@/lib/useTieredPolling";
 
 export default function OverviewPage() {
   const [data, setData] = useState<OverviewResponse | null>(null);
@@ -14,6 +20,7 @@ export default function OverviewPage() {
   const loadOverview = useCallback(async () => {
     const response = await api.get<OverviewResponse>("/api/v1/overview");
     setData(response);
+    setError(null);
   }, []);
 
   useEffect(() => {
@@ -21,10 +28,7 @@ export default function OverviewPage() {
 
     async function load() {
       try {
-        const response = await api.get<OverviewResponse>("/api/v1/overview");
-        if (!cancelled) {
-          setData(response);
-        }
+        await loadOverview();
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load overview");
@@ -40,7 +44,15 @@ export default function OverviewPage() {
     return () => {
       cancelled = true;
     };
+  }, [loadOverview]);
+
+  // REST remains reconciliation; SSE quotes merge when the stream is up.
+  useTieredPolling(true, "account", loadOverview);
+
+  const onQuote = useCallback((quote: QuoteUpdate) => {
+    setData((prev) => (prev ? applyQuoteToOverview(prev, quote) : prev));
   }, []);
+  useMarketStream(true, onQuote);
 
   async function handleRefresh() {
     setError(null);
