@@ -268,6 +268,16 @@ func TestOverviewPortfolioRunsSettingsSmoke(t *testing.T) {
 		if !ok || len(wl) != 2 {
 			t.Fatalf("watchlist: got %v", resp["watchlist"])
 		}
+		first, ok := wl[0].(map[string]any)
+		if !ok {
+			t.Fatalf("watchlist[0] want object, got %T %v", wl[0], wl[0])
+		}
+		if _, ok := first["symbol"].(string); !ok {
+			t.Fatalf("watchlist[0].symbol: %v", first["symbol"])
+		}
+		if _, ok := first["can_hold"].(bool); !ok {
+			t.Fatalf("watchlist[0].can_hold: %v", first["can_hold"])
+		}
 		if resp["market_data_provider"] != "free" {
 			t.Fatalf("market_data_provider: got %v", resp["market_data_provider"])
 		}

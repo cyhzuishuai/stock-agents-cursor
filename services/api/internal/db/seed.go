@@ -60,7 +60,7 @@ func Seed(db *gorm.DB, cfg *config.Config) error {
 
 		for _, symbol := range cfg.Watchlist {
 			if err := tx.Where(models.WatchlistSymbol{Symbol: symbol}).
-				FirstOrCreate(&models.WatchlistSymbol{Symbol: symbol}).Error; err != nil {
+				FirstOrCreate(&models.WatchlistSymbol{Symbol: symbol, CanHold: true}).Error; err != nil {
 				return err
 			}
 		}

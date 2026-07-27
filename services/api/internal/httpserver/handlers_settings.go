@@ -13,9 +13,12 @@ func (h *API) Settings(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	watchlist := make([]string, 0, len(symbols))
+	watchlist := make([]gin.H, 0, len(symbols))
 	for _, s := range symbols {
-		watchlist = append(watchlist, s.Symbol)
+		watchlist = append(watchlist, gin.H{
+			"symbol":   s.Symbol,
+			"can_hold": s.CanHold,
+		})
 	}
 
 	var rules []models.RiskRuleConfig
