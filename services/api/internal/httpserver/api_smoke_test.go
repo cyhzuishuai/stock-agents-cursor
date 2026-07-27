@@ -94,6 +94,75 @@ func bearerToken(t *testing.T, secret string, dbConn *gorm.DB) string {
 	return token
 }
 
+func TestOverviewLiveNavMatchesWeights(t *testing.T) {
+	router, gormDB, secret, _, _ := setupAPI(t)
+	token := bearerToken(t, secret, gormDB)
+
+	var account models.Account
+	if err := gormDB.First(&account).Error; err != nil {
+		t.Fatalf("account: %v", err)
+	}
+	account.Cash = 50000
+	if err := gormDB.Save(&account).Error; err != nil {
+		t.Fatalf("save account: %v", err)
+	}
+	if err := gormDB.Create(&models.Position{
+		AccountID: account.ID, Symbol: "AAPL", Qty: 100, AvgCost: 150,
+	}).Error; err != nil {
+		t.Fatalf("create position: %v", err)
+	}
+	if err := gormDB.Create(&models.NavSnapshot{
+		TradeDate: "2026-07-25", Cash: 40000, Equity: 12000, Nav: 52000,
+	}).Error; err != nil {
+		t.Fatalf("create nav snapshot: %v", err)
+	}
+	run := models.WorkflowRun{TradeDate: "2026-07-25", Status: workflow.StatusExecuted}
+	if err := gormDB.Create(&run).Error; err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if err := gormDB.Create(&models.WorkflowStepResult{
+		RunID: run.ID, Step: workflow.StepData, Status: workflow.StepStatusOK,
+		PayloadJSON: `{"bars":[{"symbol":"AAPL","close":200}]}`,
+	}).Error; err != nil {
+		t.Fatalf("create step: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/overview", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200 body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+
+	cash := resp["cash"].(float64)
+	equity := resp["equity"].(float64)
+	nav := resp["nav"].(float64)
+	if cash != 50000 {
+		t.Fatalf("cash: got %v want 50000 (live, not snapshot)", cash)
+	}
+	if equity != 20000 {
+		t.Fatalf("equity: got %v want 20000", equity)
+	}
+	if nav != 70000 {
+		t.Fatalf("nav: got %v want 70000", nav)
+	}
+
+	summary, ok := resp["positions_summary"].([]any)
+	if !ok || len(summary) != 1 {
+		t.Fatalf("positions_summary: got %T %v", resp["positions_summary"], resp["positions_summary"])
+	}
+	pos := summary[0].(map[string]any)
+	wantWeight := 20000.0 / 70000.0
+	if pos["weight"].(float64) != wantWeight {
+		t.Fatalf("weight: got %v want %v", pos["weight"], wantWeight)
+	}
+}
+
 func TestProtectedRoutesRequireAuth(t *testing.T) {
 	router, _, _, _, _ := setupAPI(t)
 	paths := []string{

@@ -24,10 +24,20 @@ func (h *API) Overview(c *gin.Context) {
 		return
 	}
 
+	cash := account.Cash
 	var equity float64
 	summary := make([]gin.H, 0, len(positions))
 	for _, p := range positions {
-		price := markOrCost(marks, p)
+		price, ok := marks[p.Symbol]
+		if !ok || price <= 0 {
+			summary = append(summary, gin.H{
+				"symbol":       p.Symbol,
+				"qty":          p.Qty,
+				"market_value": 0.0,
+				"weight":       0.0,
+			})
+			continue
+		}
 		mv := p.Qty * price
 		equity += mv
 		summary = append(summary, gin.H{
@@ -37,7 +47,7 @@ func (h *API) Overview(c *gin.Context) {
 			"weight":       0.0,
 		})
 	}
-	nav := account.Cash + equity
+	nav := cash + equity
 	if nav > 0 {
 		for i := range summary {
 			mv := summary[i]["market_value"].(float64)
@@ -72,17 +82,10 @@ func (h *API) Overview(c *gin.Context) {
 		navSeries = append(navSeries, gin.H{"trade_date": s.TradeDate, "nav": s.Nav})
 	}
 
-	// Prefer persisted NAV snapshot when available for cash/equity/nav display.
-	cash, equityOut, navOut := account.Cash, equity, nav
-	if len(snaps) > 0 {
-		last := snaps[len(snaps)-1]
-		cash, equityOut, navOut = last.Cash, last.Equity, last.Nav
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"cash":                    cash,
-		"equity":                  equityOut,
-		"nav":                     navOut,
+		"equity":                  equity,
+		"nav":                     nav,
 		"pending_approvals_count": pendingCount,
 		"latest_run":              latestRun,
 		"positions_summary":       summary,
