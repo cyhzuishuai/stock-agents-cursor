@@ -506,10 +506,7 @@ func (r *Runner) loadWatchlist(ctx context.Context) ([]string, error) {
 
 func (r *Runner) portfolioState(ctx context.Context, accountID uint, marks map[string]float64) (risk.PortfolioState, error) {
 	if r.Broker != nil {
-		if state, err := r.portfolioStateFromBroker(ctx, marks); err == nil {
-			return state, nil
-		}
-		// Fall through to DB if broker account sync fails (unit tests / transient errors).
+		return r.portfolioStateFromBroker(ctx, marks)
 	}
 	var account models.Account
 	if err := r.DB.WithContext(ctx).First(&account, accountID).Error; err != nil {

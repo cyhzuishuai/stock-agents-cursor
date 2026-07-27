@@ -32,13 +32,27 @@ type fakeBroker struct {
 	getErr  error
 	acct    broker.Account
 	pos     []broker.Position
-	acctErr error
+	acctErr         error
+	acctFailAfter   int // GetAccount succeeds this many times, then returns acctErr
+	getAccountCalls int
 
 	submitCalls []broker.OrderRequest
 	nextID      int
 }
 
 func (f *fakeBroker) GetAccount(ctx context.Context) (broker.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.acctFailAfter > 0 {
+		f.getAccountCalls++
+		if f.getAccountCalls > f.acctFailAfter {
+			if f.acctErr != nil {
+				return broker.Account{}, f.acctErr
+			}
+			return broker.Account{}, errors.New("account unavailable")
+		}
+		return f.acct, nil
+	}
 	if f.acctErr != nil {
 		return broker.Account{}, f.acctErr
 	}
@@ -650,8 +664,9 @@ func TestRunEODNAVFailurePreservesExecutedStatus(t *testing.T) {
 	})
 	inner := env.runner.Ledger.(*ledger.Service)
 	env.runner.Ledger = &failingNAVLedger{Service: inner, err: errors.New("nav boom")}
-	// Broker submit still works; GetAccount fails so upsertNAV falls through to ledger.
+	// Broker submit still works; GetAccount fails on upsertNAV so it falls through to ledger.
 	env.broker.acctErr = errors.New("account unavailable")
+	env.broker.acctFailAfter = 2 // portfolioState before + after fill succeed; upsertNAV fails
 
 	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
 	if err == nil {
