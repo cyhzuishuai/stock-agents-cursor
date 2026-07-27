@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/cyh/stock-agents/services/api/internal/approvals"
+	"github.com/cyh/stock-agents/services/api/internal/broker"
 	"github.com/cyh/stock-agents/services/api/internal/config"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
 	"github.com/cyh/stock-agents/services/api/internal/models"
@@ -40,6 +41,7 @@ type RouterDeps struct {
 	Config     *config.Config
 	Strategies *strategy.Service
 	Scheduler  SchedulerReloader
+	Broker     broker.Client
 }
 
 // API holds shared handler dependencies.
@@ -52,6 +54,7 @@ type API struct {
 	Config     *config.Config
 	Strategies *strategy.Service
 	Scheduler  SchedulerReloader
+	Broker     broker.Client
 }
 
 func (h *API) loadAccount(c *gin.Context) (models.Account, error) {

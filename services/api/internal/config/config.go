@@ -8,23 +8,27 @@ import (
 )
 
 type Config struct {
-	DatabaseURL              string
-	RedisURL                 string
-	JWTSecret                string
-	AdminUsername            string
-	AdminPassword            string
-	InitialCash              float64
-	Watchlist                []string
-	RiskMaxOrderNotional     float64
-	RiskMaxSingleNameWeight  float64
-	RiskMinCashRatio         float64
-	AgentDataURL             string
-	AgentResearchURL         string
-	AgentDecisionURL         string
-	AgentPortfolioURL        string
-	AgentRiskURL             string
-	InternalEODToken         string
-	MarketDataProvider       string
+	DatabaseURL             string
+	RedisURL                string
+	JWTSecret               string
+	AdminUsername           string
+	AdminPassword           string
+	InitialCash             float64
+	Watchlist               []string
+	RiskMaxOrderNotional    float64
+	RiskMaxSingleNameWeight float64
+	RiskMinCashRatio        float64
+	AgentDataURL            string
+	AgentResearchURL        string
+	AgentDecisionURL        string
+	AgentPortfolioURL       string
+	AgentRiskURL            string
+	InternalEODToken        string
+	MarketDataProvider      string
+	AlpacaAPIKey            string
+	AlpacaAPISecret         string
+	AlpacaBaseURL           string
+	AlpacaStreamEnabled     bool
 }
 
 func Load() (*Config, error) {
@@ -55,6 +59,11 @@ func Load() (*Config, error) {
 
 	watchlist := parseWatchlist(os.Getenv("WATCHLIST"))
 
+	alpacaBaseURL := strings.TrimSpace(os.Getenv("ALPACA_BASE_URL"))
+	if alpacaBaseURL == "" {
+		alpacaBaseURL = "https://paper-api.alpaca.markets"
+	}
+
 	return &Config{
 		DatabaseURL:             os.Getenv("DATABASE_URL"),
 		RedisURL:                os.Getenv("REDIS_URL"),
@@ -73,7 +82,20 @@ func Load() (*Config, error) {
 		AgentRiskURL:            os.Getenv("AGENT_RISK_URL"),
 		InternalEODToken:        os.Getenv("INTERNAL_EOD_TOKEN"),
 		MarketDataProvider:      os.Getenv("MARKET_DATA_PROVIDER"),
+		AlpacaAPIKey:            os.Getenv("ALPACA_API_KEY"),
+		AlpacaAPISecret:         os.Getenv("ALPACA_API_SECRET"),
+		AlpacaBaseURL:           alpacaBaseURL,
+		AlpacaStreamEnabled:     parseAlpacaStreamEnabled(os.Getenv("ALPACA_STREAM_ENABLED")),
 	}, nil
+}
+
+func parseAlpacaStreamEnabled(raw string) bool {
+	switch strings.TrimSpace(raw) {
+	case "1", "true", "TRUE":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseFloatWithDefault(key string, defaultValue float64) (float64, error) {

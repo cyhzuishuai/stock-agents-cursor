@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/cyh/stock-agents/services/api/internal/agentsclient"
 	"github.com/cyh/stock-agents/services/api/internal/approvals"
+	"github.com/cyh/stock-agents/services/api/internal/broker"
 	"github.com/cyh/stock-agents/services/api/internal/config"
 	"github.com/cyh/stock-agents/services/api/internal/db"
 	"github.com/cyh/stock-agents/services/api/internal/httpserver"
@@ -97,6 +99,13 @@ func main() {
 		}()
 	}
 
+	var brokerClient broker.Client
+	if alpaca, err := broker.NewAlpaca(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "broker: %v (continuing without Alpaca client)\n", err)
+	} else {
+		brokerClient = broker.NewCachedClient(alpaca, 5*time.Second)
+	}
+
 	router := httpserver.NewRouter(httpserver.RouterDeps{
 		DB:         gormDB,
 		JWTSecret:  cfg.JWTSecret,
@@ -106,6 +115,7 @@ func main() {
 		Config:     cfg,
 		Strategies: strategySvc,
 		Scheduler:  schedReloader,
+		Broker:     brokerClient,
 	})
 
 	addr := os.Getenv("API_ADDR")

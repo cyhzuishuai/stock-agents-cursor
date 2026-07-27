@@ -43,6 +43,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		Config:     deps.Config,
 		Strategies: deps.Strategies,
 		Scheduler:  deps.Scheduler,
+		Broker:     deps.Broker,
 	}
 	authHandlers := &auth.Handlers{DB: deps.DB, JWTSecret: deps.JWTSecret}
 	approvalHandlers := &approvals.Handlers{Service: deps.Approvals, JWTSecret: deps.JWTSecret}
