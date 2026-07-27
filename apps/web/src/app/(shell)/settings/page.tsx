@@ -42,6 +42,16 @@ function formFromStrategy(strategy: Strategy): StrategyWriteBody {
   };
 }
 
+function validateIntradayEveryMinutes(value: number): string | null {
+  if (value < 0) {
+    return "intraday_every_minutes must be >= 0";
+  }
+  if (value > 0 && value < 15) {
+    return "intraday_every_minutes must be 0 or >= 15";
+  }
+  return null;
+}
+
 function StrategiesPanel() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
@@ -125,6 +135,12 @@ function StrategiesPanel() {
       intraday_end_et: form.intraday_end_et.trim(),
       execution_mode: form.execution_mode,
     };
+    const intradayError = validateIntradayEveryMinutes(body.intraday_every_minutes);
+    if (intradayError) {
+      setError(intradayError);
+      setSaving(false);
+      return;
+    }
     try {
       if (editingId !== null) {
         await api.patch<Strategy>(`/api/v1/strategies/${editingId}`, body);
@@ -301,13 +317,17 @@ function StrategiesPanel() {
                 id="strategy-every"
                 name="intraday_every_minutes"
                 type="number"
-                min={1}
+                min={0}
+                step={1}
                 value={form.intraday_every_minutes}
                 onChange={(e) =>
                   updateField("intraday_every_minutes", Number(e.target.value))
                 }
                 required
               />
+              <p className="settings__field-hint">
+                0 disables intraday runs; otherwise use 15 or more minutes.
+              </p>
             </div>
             <div className="settings__field">
               <label htmlFor="strategy-start">Intraday start (ET)</label>

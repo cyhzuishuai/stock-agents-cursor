@@ -835,6 +835,12 @@ textarea:focus-visible {
   color: var(--ink-muted);
 }
 
+.settings__field-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
 .settings__field input,
 .settings__field select {
   padding: 0.5rem 0.75rem;
