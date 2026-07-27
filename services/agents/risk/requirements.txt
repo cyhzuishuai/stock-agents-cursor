@@ -1,0 +1,2 @@
+-e ../common
+uvicorn[standard]>=0.30
