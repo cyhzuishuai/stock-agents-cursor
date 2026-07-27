@@ -143,10 +143,20 @@ export interface ApprovalDecideRequest {
 }
 
 // Settings
+export interface WatchlistItem {
+  symbol: string;
+  can_hold: boolean;
+}
+
 export interface SettingsResponse {
-  watchlist: string[];
+  watchlist: WatchlistItem[];
   risk_rules: Record<string, unknown>;
   market_data_provider: string;
+}
+
+export interface SymbolSearchResult {
+  symbol: string;
+  name: string;
 }
 
 // Strategies

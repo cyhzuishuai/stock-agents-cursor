@@ -7,14 +7,9 @@ import type {
   SettingsResponse,
   Strategy,
   StrategyWriteBody,
+  WatchlistItem,
+  SymbolSearchResult,
 } from "@/lib/types";
-
-function formatRiskValue(value: unknown): string {
-  if (typeof value === "number") {
-    return value.toLocaleString("en-US", { maximumFractionDigits: 4 });
-  }
-  return String(value);
-}
 
 function formatScheduleSummary(strategy: Strategy): string {
   return `Pre-open ${strategy.pre_open_minutes}m · every ${strategy.intraday_every_minutes}m ${strategy.intraday_start_et}–${strategy.intraday_end_et} ET`;
@@ -403,6 +398,11 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const reloadSettings = useCallback(async () => {
+    const response = await api.get<SettingsResponse>("/api/v1/settings");
+    setData(response);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -451,10 +451,6 @@ export default function SettingsPage() {
     );
   }
 
-  const riskEntries = Object.entries(data.risk_rules).sort(([a], [b]) =>
-    a.localeCompare(b),
-  );
-
   return (
     <div className="settings">
       <header className="page-header">
@@ -468,54 +464,310 @@ export default function SettingsPage() {
           <p>{data.market_data_provider || "—"}</p>
         </section>
 
-        <section className="panel">
-          <h2 className="panel__title">Watchlist</h2>
-          {data.watchlist.length === 0 ? (
-            <p className="empty-state">No symbols configured</p>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th scope="col">Symbol</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.watchlist.map((symbol) => (
-                  <tr key={symbol}>
-                    <td>{symbol}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
+        <WatchlistPanel
+          items={data.watchlist}
+          onChanged={reloadSettings}
+        />
 
-        <section className="panel">
-          <h2 className="panel__title">Risk rules</h2>
-          {riskEntries.length === 0 ? (
-            <p className="empty-state">No risk rules configured</p>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th scope="col">Rule</th>
-                  <th scope="col">Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {riskEntries.map(([key, value]) => (
-                  <tr key={key}>
-                    <td>{key}</td>
-                    <td>{formatRiskValue(value)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
+        <RiskPanel
+          riskRules={data.risk_rules}
+          onChanged={reloadSettings}
+        />
 
         <StrategiesPanel />
       </div>
     </div>
+  );
+}
+
+function WatchlistPanel({
+  items,
+  onChanged,
+}: {
+  items: WatchlistItem[];
+  onChanged: () => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SymbolSearchResult[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [panelError, setPanelError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const found = await api.get<SymbolSearchResult[]>(
+          `/api/v1/symbols/search?q=${encodeURIComponent(q)}`,
+        );
+        if (!cancelled) {
+          setResults(found);
+          setSearchOpen(true);
+          setPanelError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setPanelError(
+            err instanceof Error ? err.message : "Symbol search failed",
+          );
+        }
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  async function addSymbol(symbol: string) {
+    if (items.some((item) => item.symbol === symbol)) {
+      setPanelError(`${symbol} is already on the watchlist`);
+      setSearchOpen(false);
+      return;
+    }
+    setBusy(true);
+    setPanelError(null);
+    try {
+      await api.post("/api/v1/settings/watchlist", {
+        symbol,
+        can_hold: true,
+      });
+      setQuery("");
+      setResults([]);
+      setSearchOpen(false);
+      await onChanged();
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : "Failed to add symbol");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleCanHold(symbol: string, canHold: boolean) {
+    setBusy(true);
+    setPanelError(null);
+    try {
+      await api.patch(`/api/v1/settings/watchlist/${encodeURIComponent(symbol)}`, {
+        can_hold: canHold,
+      });
+      await onChanged();
+    } catch (err) {
+      setPanelError(
+        err instanceof Error ? err.message : "Failed to update can_hold",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeSymbol(symbol: string) {
+    if (!window.confirm(`Remove ${symbol} from watchlist?`)) {
+      return;
+    }
+    setBusy(true);
+    setPanelError(null);
+    try {
+      await api.delete(`/api/v1/settings/watchlist/${encodeURIComponent(symbol)}`);
+      await onChanged();
+    } catch (err) {
+      setPanelError(
+        err instanceof Error ? err.message : "Failed to remove symbol",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel">
+      <h2 className="panel__title">Watchlist</h2>
+      {panelError ? (
+        <p className="alert" role="alert">
+          {panelError}
+        </p>
+      ) : null}
+      <div className="settings__search">
+        <label className="settings__field">
+          <span>Search symbols</span>
+          <input
+            type="search"
+            value={query}
+            disabled={busy}
+            placeholder="e.g. AAPL"
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => {
+              if (results.length > 0) setSearchOpen(true);
+            }}
+          />
+        </label>
+        {searchOpen && results.length > 0 ? (
+          <ul className="settings__search-results" role="listbox">
+            {results.map((item) => (
+              <li key={item.symbol}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void addSymbol(item.symbol)}
+                >
+                  {item.symbol}
+                  {item.name ? ` · ${item.name}` : ""}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+      {items.length === 0 ? (
+        <p className="empty-state">No symbols configured</p>
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th scope="col">Symbol</th>
+              <th scope="col">可持仓</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.symbol}>
+                <td>{item.symbol}</td>
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={item.can_hold}
+                    disabled={busy}
+                    aria-label={`可持仓 ${item.symbol}`}
+                    onChange={(e) =>
+                      void toggleCanHold(item.symbol, e.target.checked)
+                    }
+                  />
+                </td>
+                <td>
+                  <div className="settings__row-actions">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void removeSymbol(item.symbol)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function RiskPanel({
+  riskRules,
+  onChanged,
+}: {
+  riskRules: Record<string, unknown>;
+  onChanged: () => Promise<void>;
+}) {
+  const entries = Object.entries(riskRules).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  const [drafts, setDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      entries.map(([key, value]) => [key, String(value ?? "")]),
+    ),
+  );
+  const [panelError, setPanelError] = useState<string | null>(null);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDrafts(
+      Object.fromEntries(
+        Object.entries(riskRules)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, value]) => [key, String(value ?? "")]),
+      ),
+    );
+  }, [riskRules]);
+
+  async function saveKey(key: string) {
+    const raw = drafts[key] ?? "";
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+      setPanelError(`${key}: value must be a finite number`);
+      return;
+    }
+    setSavingKey(key);
+    setPanelError(null);
+    try {
+      await api.patch(`/api/v1/settings/risk/${encodeURIComponent(key)}`, {
+        value,
+      });
+      await onChanged();
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : "Failed to save risk");
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
+  return (
+    <section className="panel">
+      <h2 className="panel__title">Risk rules</h2>
+      {panelError ? (
+        <p className="alert" role="alert">
+          {panelError}
+        </p>
+      ) : null}
+      {entries.length === 0 ? (
+        <p className="empty-state">No risk rules configured</p>
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th scope="col">Rule</th>
+              <th scope="col">Value</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map(([key]) => (
+              <tr key={key}>
+                <td>{key}</td>
+                <td>
+                  <input
+                    type="number"
+                    step="any"
+                    value={drafts[key] ?? ""}
+                    aria-label={`Risk value ${key}`}
+                    disabled={savingKey === key}
+                    onChange={(e) =>
+                      setDrafts((prev) => ({ ...prev, [key]: e.target.value }))
+                    }
+                  />
+                </td>
+                <td>
+                  <div className="settings__row-actions">
+                    <button
+                      type="button"
+                      disabled={savingKey === key}
+                      onClick={() => void saveKey(key)}
+                    >
+                      Save
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }

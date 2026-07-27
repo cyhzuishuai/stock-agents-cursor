@@ -25,8 +25,17 @@ POST /api/v1/runs/:id/cancel -> { ok: true }
 GET /api/v1/approvals?status=pending -> [{ id, proposal_id, symbol, side, qty, breach_reasons, created_at }]
 POST /api/v1/approvals/:id/decide { "decision": "approved"|"rejected", "note"?: string } -> { ok: true }
 
-## Settings (read-only)
-GET /api/v1/settings -> { watchlist: string[], risk_rules: object, market_data_provider: string }
+## Settings
+GET /api/v1/settings -> {
+  watchlist: [{ symbol, can_hold }],
+  risk_rules: object,
+  market_data_provider: string
+}
+POST /api/v1/settings/watchlist { symbol, can_hold? } -> { symbol, can_hold }
+PATCH /api/v1/settings/watchlist/:symbol { can_hold } -> { symbol, can_hold }
+DELETE /api/v1/settings/watchlist/:symbol -> { ok: true }
+PATCH /api/v1/settings/risk/:key { value: number } -> { key, value }
+GET /api/v1/symbols/search?q= -> [{ symbol, name }]
 
 ## Internal
 POST /internal/eod/run  Header X-Internal-Token -> { run_id }

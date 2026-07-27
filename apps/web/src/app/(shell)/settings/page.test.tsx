@@ -4,10 +4,15 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsPage from "./page";
-import type { SettingsResponse, Strategy, StrategyWriteBody } from "@/lib/types";
+import type {
+  SettingsResponse,
+  Strategy,
+  StrategyWriteBody,
+  WatchlistItem,
+} from "@/lib/types";
 
-const settingsFixture: SettingsResponse = {
-  watchlist: ["AAPL"],
+let settingsFixture: SettingsResponse = {
+  watchlist: [{ symbol: "AAPL", can_hold: true }],
   risk_rules: { max_order_notional: 10000 },
   market_data_provider: "stub",
 };
@@ -27,8 +32,20 @@ const strategiesFixture: Strategy[] = [
   },
 ];
 
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 describe("SettingsPage strategies", () => {
   beforeEach(() => {
+    settingsFixture = {
+      watchlist: [{ symbol: "AAPL", can_hold: true }],
+      risk_rules: { max_order_notional: 10000 },
+      market_data_provider: "stub",
+    };
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input, init) => {
@@ -36,25 +53,16 @@ describe("SettingsPage strategies", () => {
         const method = init?.method ?? "GET";
         if (url.includes("/api/v1/strategies") && method === "POST") {
           const body = JSON.parse(String(init?.body)) as StrategyWriteBody;
-          return new Response(
-            JSON.stringify({ id: 2, ...body, is_system_default: false, is_active: false }),
-            {
-              status: 201,
-              headers: { "Content-Type": "application/json" },
-            },
+          return jsonResponse(
+            { id: 2, ...body, is_system_default: false, is_active: false },
+            201,
           );
         }
         if (url.includes("/api/v1/strategies")) {
-          return new Response(JSON.stringify(strategiesFixture), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return jsonResponse(strategiesFixture);
         }
         if (url.includes("/api/v1/settings")) {
-          return new Response(JSON.stringify(settingsFixture), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return jsonResponse(settingsFixture);
         }
         return new Response("not found", { status: 404 });
       }),
@@ -107,7 +115,9 @@ describe("SettingsPage strategies", () => {
     await user.type(screen.getByLabelText("Name"), "No intraday");
     await user.clear(everyInput);
     await user.type(everyInput, "10");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(
+      within(strategiesSection!).getByRole("button", { name: "Save" }),
+    );
 
     await waitFor(() => {
       expect(
@@ -122,7 +132,9 @@ describe("SettingsPage strategies", () => {
 
     await user.clear(everyInput);
     await user.type(everyInput, "0");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(
+      within(strategiesSection!).getByRole("button", { name: "Save" }),
+    );
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
@@ -130,6 +142,152 @@ describe("SettingsPage strategies", () => {
         expect.objectContaining({
           method: "POST",
           body: expect.stringContaining('"intraday_every_minutes":0'),
+        }),
+      );
+    });
+  });
+});
+
+describe("SettingsPage watchlist and risk", () => {
+  beforeEach(() => {
+    settingsFixture = {
+      watchlist: [{ symbol: "AAPL", can_hold: true }],
+      risk_rules: { max_order_notional: 10000 },
+      market_data_provider: "stub",
+    };
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+
+        if (url.includes("/api/v1/symbols/search")) {
+          return jsonResponse([{ symbol: "MSFT", name: "Microsoft Corporation" }]);
+        }
+        if (url.includes("/api/v1/settings/watchlist") && method === "POST") {
+          const body = JSON.parse(String(init?.body)) as WatchlistItem;
+          settingsFixture = {
+            ...settingsFixture,
+            watchlist: [
+              ...settingsFixture.watchlist,
+              { symbol: body.symbol, can_hold: body.can_hold ?? true },
+            ],
+          };
+          return jsonResponse(
+            { symbol: body.symbol, can_hold: body.can_hold ?? true },
+            201,
+          );
+        }
+        if (url.includes("/api/v1/settings/watchlist/") && method === "PATCH") {
+          const body = JSON.parse(String(init?.body)) as { can_hold: boolean };
+          const symbol = url.split("/").pop()!;
+          settingsFixture = {
+            ...settingsFixture,
+            watchlist: settingsFixture.watchlist.map((item) =>
+              item.symbol === symbol
+                ? { ...item, can_hold: body.can_hold }
+                : item,
+            ),
+          };
+          return jsonResponse({ symbol, can_hold: body.can_hold });
+        }
+        if (url.includes("/api/v1/settings/risk/") && method === "PATCH") {
+          const body = JSON.parse(String(init?.body)) as { value: number };
+          const key = url.split("/").pop()!;
+          settingsFixture = {
+            ...settingsFixture,
+            risk_rules: { ...settingsFixture.risk_rules, [key]: body.value },
+          };
+          return jsonResponse({ key, value: body.value });
+        }
+        if (url.includes("/api/v1/strategies")) {
+          return jsonResponse(strategiesFixture);
+        }
+        if (url.includes("/api/v1/settings")) {
+          return jsonResponse(settingsFixture);
+        }
+        return new Response("not found", { status: 404 });
+      }),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("toggles 可持仓 via PATCH", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<SettingsPage />);
+
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "可持仓 AAPL",
+    });
+    expect((checkbox as HTMLInputElement).checked).toBe(true);
+
+    await user.click(checkbox);
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/v1/settings/watchlist/AAPL"),
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.stringContaining('"can_hold":false'),
+        }),
+      );
+    });
+  });
+
+  it("adds a searched symbol via POST", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<SettingsPage />);
+
+    await screen.findByRole("heading", { name: "Watchlist" });
+    const search = screen.getByPlaceholderText("e.g. AAPL");
+    await user.type(search, "msf");
+    await vi.advanceTimersByTimeAsync(350);
+
+    const option = await screen.findByRole("button", {
+      name: /MSFT · Microsoft Corporation/,
+    });
+    await user.click(option);
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/v1/settings/watchlist"),
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"symbol":"MSFT"'),
+        }),
+      );
+    });
+  });
+
+  it("saves risk rule via PATCH", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<SettingsPage />);
+
+    const valueInput = await screen.findByLabelText(
+      "Risk value max_order_notional",
+    );
+    await user.clear(valueInput);
+    await user.type(valueInput, "12345");
+    const riskSection = screen
+      .getByRole("heading", { name: "Risk rules" })
+      .closest("section");
+    await user.click(
+      within(riskSection!).getByRole("button", { name: "Save" }),
+    );
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/v1/settings/risk/max_order_notional"),
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.stringContaining('"value":12345'),
         }),
       );
     });
