@@ -105,7 +105,7 @@ Verified against design spec §1.1 via codebase review and unit tests (`go test 
 
 | Area | Status | Notes |
 |------|--------|-------|
-| EOD schedule + manual trigger | Implemented | Cron `30 16 * * 1-5` US/Eastern in API scheduler; `POST /api/v1/runs/eod` (JWT) and `POST /internal/eod/run` (internal token); web **Run EOD now** on `/runs`. |
+| EOD schedule + manual trigger | Implemented | **DB active strategy is authoritative** (pre-open + intraday ticks via `strategy.BuildJobSpecs`; hot-reload on activate/PATCH). `EOD_CRON` is **legacy only** (unused when a strategy is active; no active strategy → no automatic ticks). Manual: `POST /api/v1/runs/eod` (JWT) and `POST /internal/eod/run` (internal token); web **Run EOD now** on `/runs`. |
 | Five agents / ledger boundary | Implemented | `agent-data`, `agent-research`, `agent-decision`, `agent-portfolio`, `agent-risk` in Compose; ledger fills only via Go `ledger.Service.ApplyFill`. |
 | Portfolio fields | Mostly implemented | Cash, positions, weights, stop-loss / take-profit on positions and UI; concentration in Go risk engine. |
 | Risk auto vs approval | Implemented | Go `risk.Evaluate` → auto fill or `awaiting_approval` + approval rows with `breach_reasons`. |

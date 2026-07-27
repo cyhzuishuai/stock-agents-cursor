@@ -1,26 +1,28 @@
-// Package scheduler triggers end-of-day workflow runs on a cron schedule in US/Eastern.
+// Package scheduler triggers workflow runs from the active strategy schedule in US/Eastern.
 //
-// Default schedule: 16:30 America/New_York, Monday–Friday (cron "30 16 * * 1-5").
-// Override with EOD_CRON; expressions are evaluated in America/New_York unless the
-// expression includes an explicit timezone (robfig/cron v3).
-//
-// Manual trigger: POST /internal/eod/run with header X-Internal-Token (INTERNAL_EOD_TOKEN).
+// Jobs are derived via strategy.BuildJobSpecs (pre-open + intraday). Hot-reload on
+// activate/PATCH replaces cron entries. EOD_CRON is legacy-only (see deploy/README.md);
+// with no active strategy the scheduler registers no automatic ticks.
 package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
+	"github.com/cyh/stock-agents/services/api/internal/models"
+	"github.com/cyh/stock-agents/services/api/internal/strategy"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/robfig/cron/v3"
 )
 
 const (
-	// DefaultLocation is the US/Eastern market timezone used for EOD scheduling.
+	// DefaultLocation is the US/Eastern market timezone used for scheduling.
 	DefaultLocation = "America/New_York"
-	// DefaultCronExpr fires at 16:30 Mon–Fri in DefaultLocation (after regular close).
+	// DefaultCronExpr is the legacy single-tick expression (Mon–Fri 16:30 ET).
 	DefaultCronExpr = "30 16 * * 1-5"
 )
 
@@ -29,25 +31,30 @@ type EODRunner interface {
 	RunEOD(ctx context.Context, params workflow.RunParams) (uint, error)
 }
 
-// Options configures the EOD scheduler.
+// StrategySource loads the currently active strategy (nil if none).
+type StrategySource interface {
+	Active(ctx context.Context) (*models.Strategy, error)
+}
+
+// Options configures the strategy-driven scheduler.
 type Options struct {
 	Runner   EODRunner
-	CronExpr string
 	Location *time.Location
 	Now      func() time.Time
+	Source   StrategySource
 }
 
-// Scheduler runs EOD on a cron schedule.
+// Scheduler runs workflow ticks from the active strategy under a mutex-guarded cron.
 type Scheduler struct {
-	runner   EODRunner
-	cronExpr string
-	loc      *time.Location
-	now      func() time.Time
-	schedule cron.Schedule
-	cron     *cron.Cron
+	runner EODRunner
+	loc    *time.Location
+	now    func() time.Time
+	source StrategySource
+	mu     sync.Mutex
+	cron   *cron.Cron
 }
 
-// CronExprFromEnv returns EOD_CRON or DefaultCronExpr.
+// CronExprFromEnv returns EOD_CRON or DefaultCronExpr (legacy; DB strategy is authoritative).
 func CronExprFromEnv() string {
 	if v := os.Getenv("EOD_CRON"); v != "" {
 		return v
@@ -69,10 +76,6 @@ func New(opts Options) (*Scheduler, error) {
 	if opts.Runner == nil {
 		return nil, fmt.Errorf("scheduler: runner is required")
 	}
-	expr := opts.CronExpr
-	if expr == "" {
-		expr = CronExprFromEnv()
-	}
 	loc := opts.Location
 	if loc == nil {
 		loc = NewYorkLocation()
@@ -81,19 +84,11 @@ func New(opts Options) (*Scheduler, error) {
 	if now == nil {
 		now = time.Now
 	}
-
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	schedule, err := parser.Parse(expr)
-	if err != nil {
-		return nil, fmt.Errorf("scheduler: parse cron %q: %w", expr, err)
-	}
-
 	return &Scheduler{
-		runner:   opts.Runner,
-		cronExpr: expr,
-		loc:      loc,
-		now:      now,
-		schedule: schedule,
+		runner: opts.Runner,
+		loc:    loc,
+		now:    now,
+		source: opts.Source,
 	}, nil
 }
 
@@ -114,43 +109,95 @@ func TradeDate(at time.Time, loc *time.Location) string {
 	return at.In(loc).Format("2006-01-02")
 }
 
-// Tick runs EOD once when the injected/current time matches the schedule.
-func (s *Scheduler) Tick(ctx context.Context) error {
-	now := s.now()
-	ok, err := MatchesSchedule(now, s.cronExpr, s.loc)
-	if err != nil {
-		return err
+// JobCount returns the number of registered cron entries (for tests).
+func (s *Scheduler) JobCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cron == nil {
+		return 0
 	}
-	if !ok {
-		return nil
-	}
-	tradeDate := TradeDate(now, s.loc)
-	_, err = s.runner.RunEOD(ctx, workflow.RunParams{
-		TradeDate: tradeDate,
-		Trigger:   workflow.TriggerLegacyEOD,
-	})
-	return err
+	return len(s.cron.Entries())
 }
 
-// Start registers the cron job and blocks until ctx is cancelled.
-func (s *Scheduler) Start(ctx context.Context) error {
-	if s.cron != nil {
-		return fmt.Errorf("scheduler: already started")
-	}
-	c := cron.New(cron.WithLocation(s.loc))
-	_, err := c.AddFunc(s.cronExpr, func() {
-		if err := s.Tick(context.Background()); err != nil {
-			fmt.Fprintf(os.Stderr, "scheduler: eod tick: %v\n", err)
+// Reload stops existing jobs and registers ticks from the active strategy.
+func (s *Scheduler) Reload(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var strat *models.Strategy
+	var jobs []strategy.JobSpec
+	if s.source != nil {
+		active, err := s.source.Active(ctx)
+		if err != nil {
+			return err
 		}
-	})
-	if err != nil {
-		return fmt.Errorf("scheduler: add cron: %w", err)
+		strat = active
+		if strat != nil {
+			jobs, err = strategy.BuildJobSpecs(*strat)
+			if err != nil {
+				return fmt.Errorf("scheduler: build job specs: %w", err)
+			}
+		}
+	}
+
+	if s.cron != nil {
+		stopCtx := s.cron.Stop()
+		<-stopCtx.Done()
+		s.cron = nil
+	}
+
+	c := cron.New(cron.WithLocation(s.loc))
+	if strat == nil {
+		fmt.Fprintf(os.Stderr, "scheduler: no active strategy; registering no jobs\n")
+	} else {
+		id := strat.ID
+		mode := strat.ExecutionMode
+		for _, job := range jobs {
+			trigger := job.Trigger
+			expr := job.CronExpr
+			if _, err := c.AddFunc(expr, func() {
+				s.runJob(context.Background(), id, trigger, mode)
+			}); err != nil {
+				return fmt.Errorf("scheduler: add cron %q: %w", expr, err)
+			}
+		}
 	}
 	s.cron = c
 	c.Start()
+	return nil
+}
 
+func (s *Scheduler) runJob(ctx context.Context, strategyID uint, trigger, executionMode string) {
+	now := s.now()
+	sid := strategyID
+	_, err := s.runner.RunEOD(ctx, workflow.RunParams{
+		TradeDate:     TradeDate(now, s.loc),
+		StrategyID:    &sid,
+		Trigger:       trigger,
+		ExecutionMode: executionMode,
+	})
+	if err == nil {
+		return
+	}
+	if errors.Is(err, workflow.ErrLockHeld) {
+		fmt.Fprintf(os.Stderr, "scheduler: skip (lock held): %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "scheduler: eod run: %v\n", err)
+}
+
+// Start performs an initial Reload then blocks until ctx is cancelled.
+func (s *Scheduler) Start(ctx context.Context) error {
+	if err := s.Reload(ctx); err != nil {
+		return err
+	}
 	<-ctx.Done()
-	stopCtx := c.Stop()
-	<-stopCtx.Done()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cron != nil {
+		stopCtx := s.cron.Stop()
+		<-stopCtx.Done()
+		s.cron = nil
+	}
 	return nil
 }

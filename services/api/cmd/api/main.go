@@ -76,16 +76,20 @@ func main() {
 		}
 	}
 
+	strategySvc := &strategy.Service{DB: gormDB}
+	var schedReloader httpserver.SchedulerReloader = httpserver.NoopSchedulerReloader{}
+
 	if eodRunner != nil {
 		sched, err := scheduler.New(scheduler.Options{
 			Runner:   eodRunner,
-			CronExpr: scheduler.CronExprFromEnv(),
 			Location: scheduler.NewYorkLocation(),
+			Source:   strategySvc,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "scheduler: %v\n", err)
 			os.Exit(1)
 		}
+		schedReloader = sched
 		go func() {
 			if err := sched.Start(context.Background()); err != nil {
 				fmt.Fprintf(os.Stderr, "scheduler: %v\n", err)
@@ -100,8 +104,8 @@ func main() {
 		Approvals:  approvalsSvc,
 		Ledger:     ledgerSvc,
 		Config:     cfg,
-		Strategies: &strategy.Service{DB: gormDB},
-		Scheduler:  httpserver.NoopSchedulerReloader{},
+		Strategies: strategySvc,
+		Scheduler:  schedReloader,
 	})
 
 	addr := os.Getenv("API_ADDR")
