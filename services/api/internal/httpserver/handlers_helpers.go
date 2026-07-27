@@ -10,6 +10,7 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
 	"github.com/cyh/stock-agents/services/api/internal/strategy"
 	"github.com/cyh/stock-agents/services/api/internal/stream"
+	"github.com/cyh/stock-agents/services/api/internal/symbolsearch"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -32,32 +33,34 @@ func (NoopSchedulerReloader) Reload(context.Context) error { return nil }
 
 // RouterDeps are dependencies for NewRouter.
 type RouterDeps struct {
-	DB         *gorm.DB
-	JWTSecret  string
-	Runner     EODRunner
-	Approvals  *approvals.Service
-	Ledger     *ledger.Service
-	Config     *config.Config
-	Strategies *strategy.Service
-	Scheduler  SchedulerReloader
-	HTTPClient *http.Client
-	Broker     broker.Client
-	Stream     *stream.Hub
+	DB           *gorm.DB
+	JWTSecret    string
+	Runner       EODRunner
+	Approvals    *approvals.Service
+	Ledger       *ledger.Service
+	Config       *config.Config
+	Strategies   *strategy.Service
+	Scheduler    SchedulerReloader
+	HTTPClient   *http.Client
+	Broker       broker.Client
+	Stream       *stream.Hub
+	SymbolSearch *symbolsearch.Client
 }
 
 // API holds shared handler dependencies.
 type API struct {
-	DB         *gorm.DB
-	JWTSecret  string
-	Runner     EODRunner
-	Approvals  *approvals.Service
-	Ledger     *ledger.Service
-	Config     *config.Config
-	Strategies *strategy.Service
-	Scheduler  SchedulerReloader
-	HTTPClient *http.Client
-	Broker     broker.Client
-	Stream     *stream.Hub
+	DB           *gorm.DB
+	JWTSecret    string
+	Runner       EODRunner
+	Approvals    *approvals.Service
+	Ledger       *ledger.Service
+	Config       *config.Config
+	Strategies   *strategy.Service
+	Scheduler    SchedulerReloader
+	HTTPClient   *http.Client
+	Broker       broker.Client
+	Stream       *stream.Hub
+	SymbolSearch *symbolsearch.Client
 }
 
 func (h *API) requireBroker(c *gin.Context) bool {

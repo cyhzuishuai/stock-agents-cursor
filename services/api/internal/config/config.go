@@ -28,6 +28,7 @@ type Config struct {
 	AlpacaAPIKey            string
 	AlpacaAPISecret         string
 	AlpacaBaseURL           string
+	AlpacaDataBaseURL       string
 	AlpacaStreamEnabled     bool
 }
 
@@ -63,6 +64,10 @@ func Load() (*Config, error) {
 	if alpacaBaseURL == "" {
 		alpacaBaseURL = "https://paper-api.alpaca.markets"
 	}
+	alpacaDataBaseURL := strings.TrimSpace(os.Getenv("ALPACA_DATA_BASE_URL"))
+	if alpacaDataBaseURL == "" {
+		alpacaDataBaseURL = "https://data.alpaca.markets"
+	}
 
 	return &Config{
 		DatabaseURL:             os.Getenv("DATABASE_URL"),
@@ -85,6 +90,7 @@ func Load() (*Config, error) {
 		AlpacaAPIKey:            os.Getenv("ALPACA_API_KEY"),
 		AlpacaAPISecret:         os.Getenv("ALPACA_API_SECRET"),
 		AlpacaBaseURL:           alpacaBaseURL,
+		AlpacaDataBaseURL:       alpacaDataBaseURL,
 		AlpacaStreamEnabled:     parseAlpacaStreamEnabled(os.Getenv("ALPACA_STREAM_ENABLED")),
 	}, nil
 }

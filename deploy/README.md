@@ -23,9 +23,11 @@ Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, `ALPACA_API_KE
 |----------|-------|
 | `ALPACA_API_KEY` / `ALPACA_API_SECRET` | Required for Paper trading and market data; server-side only |
 | `ALPACA_BASE_URL` | Default `https://paper-api.alpaca.markets` |
-| `ALPACA_DATA_BASE_URL` | Default `https://data.alpaca.markets` |
+| `ALPACA_DATA_BASE_URL` | Default `https://data.alpaca.markets` (bars + symbol-search snapshots) |
 | `MARKET_DATA_PROVIDER` | Default `alpaca`; set `free` (Yahoo) only as dev fallback without keys |
 | `INITIAL_CASH` | Offline/test seed only; live cash comes from Alpaca Paper account |
+
+Settings watchlist symbol search (`GET /api/v1/symbols/search`) uses Alpaca assets + snapshots (not Yahoo). Requires `ALPACA_API_KEY` / `ALPACA_API_SECRET`.
 
 | File | Role |
 |------|------|

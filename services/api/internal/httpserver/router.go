@@ -35,17 +35,18 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	})
 
 	api := &API{
-		DB:         deps.DB,
-		JWTSecret:  deps.JWTSecret,
-		Runner:     deps.Runner,
-		Approvals:  deps.Approvals,
-		Ledger:     deps.Ledger,
-		Config:     deps.Config,
-		Strategies: deps.Strategies,
-		Scheduler:  deps.Scheduler,
-		HTTPClient: deps.HTTPClient,
-		Broker:     deps.Broker,
-		Stream:     deps.Stream,
+		DB:           deps.DB,
+		JWTSecret:    deps.JWTSecret,
+		Runner:       deps.Runner,
+		Approvals:    deps.Approvals,
+		Ledger:       deps.Ledger,
+		Config:       deps.Config,
+		Strategies:   deps.Strategies,
+		Scheduler:    deps.Scheduler,
+		HTTPClient:   deps.HTTPClient,
+		Broker:       deps.Broker,
+		Stream:       deps.Stream,
+		SymbolSearch: deps.SymbolSearch,
 	}
 	authHandlers := &auth.Handlers{DB: deps.DB, JWTSecret: deps.JWTSecret}
 	approvalHandlers := &approvals.Handlers{Service: deps.Approvals, JWTSecret: deps.JWTSecret}

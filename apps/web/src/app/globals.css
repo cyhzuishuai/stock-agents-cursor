@@ -866,22 +866,102 @@ textarea:focus-visible {
   list-style: none;
   border: 1px solid var(--rule);
   background: var(--paper);
-  max-height: 12rem;
+  max-height: 22rem;
   overflow: auto;
 }
 
-.settings__search-results button {
-  display: block;
+.settings__search-card {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
   width: 100%;
   text-align: left;
-  padding: 0.5rem 0.75rem;
+  padding: 0.65rem 0.75rem;
   border: 0;
+  border-bottom: 1px solid var(--rule);
   background: transparent;
   color: inherit;
   font: inherit;
   cursor: pointer;
 }
 
-.settings__search-results button:hover {
+.settings__search-card:hover {
   background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+.settings__search-card:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settings__search-card-avatar {
+  flex: 0 0 2.25rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: grid;
+  place-items: center;
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.settings__search-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.settings__search-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.settings__search-card-symbol {
+  font-weight: 700;
+}
+
+.settings__search-card-quotes {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.settings__search-card-price {
+  font-weight: 600;
+}
+
+.settings__search-card-change {
+  font-size: 0.85rem;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+}
+
+.settings__search-card-change--up {
+  color: #1a7f37;
+}
+
+.settings__search-card-change--down {
+  color: #c62828;
+}
+
+.settings__search-card-name {
+  font-size: 0.85rem;
+  color: color-mix(in srgb, var(--ink) 65%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings__search-end {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  color: color-mix(in srgb, var(--ink) 45%, transparent);
+  text-align: center;
 }

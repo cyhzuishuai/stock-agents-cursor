@@ -1,116 +1,33 @@
 package httpserver
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
+	"github.com/cyh/stock-agents/services/api/internal/symbolsearch"
 	"github.com/gin-gonic/gin"
 )
 
-const symbolSearchMaxResults = 10
-
-const yahooSearchURL = "https://query1.finance.yahoo.com/v1/finance/search"
-
-// SymbolSearchResult is one symbol match for watchlist autocomplete.
-type SymbolSearchResult struct {
-	Symbol string `json:"symbol"`
-	Name   string `json:"name"`
-}
-
-type yahooSearchResponse struct {
-	Quotes []yahooQuote `json:"quotes"`
-}
-
-type yahooQuote struct {
-	Symbol    string `json:"symbol"`
-	ShortName string `json:"shortname"`
-	LongName  string `json:"longname"`
-	QuoteType string `json:"quoteType"`
-}
-
+// SearchSymbols proxies Alpaca asset search + snapshot quotes for Settings autocomplete.
 func (h *API) SearchSymbols(c *gin.Context) {
 	q := strings.TrimSpace(c.Query("q"))
 	if q == "" {
-		c.JSON(http.StatusOK, []SymbolSearchResult{})
+		c.JSON(http.StatusOK, []symbolsearch.Result{})
 		return
 	}
 
-	client := h.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
+	if h.SymbolSearch == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "alpaca not configured"})
+		return
 	}
 
-	u, err := url.Parse(yahooSearchURL)
+	results, err := h.SymbolSearch.Search(c.Request.Context(), q)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "symbol search unavailable"})
 		return
 	}
-	params := u.Query()
-	params.Set("q", q)
-	params.Set("quotesCount", fmt.Sprintf("%d", symbolSearchMaxResults))
-	params.Set("newsCount", "0")
-	u.RawQuery = params.Encode()
-
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, u.String(), nil)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "symbol search unavailable"})
-		return
+	if results == nil {
+		results = []symbolsearch.Result{}
 	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "symbol search unavailable"})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "symbol search unavailable"})
-		return
-	}
-
-	var payload yahooSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "symbol search unavailable"})
-		return
-	}
-
-	results := mapYahooQuotes(payload.Quotes)
 	c.JSON(http.StatusOK, results)
-}
-
-func mapYahooQuotes(quotes []yahooQuote) []SymbolSearchResult {
-	hasEquity := false
-	for _, q := range quotes {
-		if q.Symbol != "" && q.QuoteType == "EQUITY" {
-			hasEquity = true
-			break
-		}
-	}
-
-	out := make([]SymbolSearchResult, 0, symbolSearchMaxResults)
-	for _, q := range quotes {
-		if q.Symbol == "" {
-			continue
-		}
-		if hasEquity {
-			if q.QuoteType != "EQUITY" {
-				continue
-			}
-		} else if q.QuoteType != "" && q.QuoteType != "EQUITY" {
-			continue
-		}
-		name := q.ShortName
-		if name == "" {
-			name = q.LongName
-		}
-		out = append(out, SymbolSearchResult{Symbol: q.Symbol, Name: name})
-		if len(out) >= symbolSearchMaxResults {
-			break
-		}
-	}
-	return out
 }

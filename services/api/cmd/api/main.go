@@ -17,6 +17,7 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/scheduler"
 	"github.com/cyh/stock-agents/services/api/internal/strategy"
 	"github.com/cyh/stock-agents/services/api/internal/stream"
+	"github.com/cyh/stock-agents/services/api/internal/symbolsearch"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/redis/go-redis/v9"
 )
@@ -116,17 +117,20 @@ func main() {
 		}
 	}
 
+	symbolSearcher := symbolsearch.NewFromConfig(cfg, nil)
+
 	router := httpserver.NewRouter(httpserver.RouterDeps{
-		DB:         gormDB,
-		JWTSecret:  cfg.JWTSecret,
-		Runner:     eodRunner,
-		Approvals:  approvalsSvc,
-		Ledger:     ledgerSvc,
-		Config:     cfg,
-		Strategies: strategySvc,
-		Scheduler:  schedReloader,
-		Broker:     brokerClient,
-		Stream:     streamHub,
+		DB:           gormDB,
+		JWTSecret:    cfg.JWTSecret,
+		Runner:       eodRunner,
+		Approvals:    approvalsSvc,
+		Ledger:       ledgerSvc,
+		Config:       cfg,
+		Strategies:   strategySvc,
+		Scheduler:    schedReloader,
+		Broker:       brokerClient,
+		Stream:       streamHub,
+		SymbolSearch: symbolSearcher,
 	})
 
 	addr := os.Getenv("API_ADDR")

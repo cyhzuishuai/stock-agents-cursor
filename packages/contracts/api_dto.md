@@ -35,7 +35,7 @@ POST /api/v1/settings/watchlist { symbol, can_hold? } -> { symbol, can_hold }
 PATCH /api/v1/settings/watchlist/:symbol { can_hold } -> { symbol, can_hold }
 DELETE /api/v1/settings/watchlist/:symbol -> { ok: true }
 PATCH /api/v1/settings/risk/:key { value: number } -> { key, value }
-GET /api/v1/symbols/search?q= -> [{ symbol, name }]
+GET /api/v1/symbols/search?q= -> [{ symbol, name, price?, change?, change_pct?, asset_class? }]  (Alpaca assets + snapshots)
 
 ## Internal
 POST /internal/eod/run  Header X-Internal-Token -> { run_id }

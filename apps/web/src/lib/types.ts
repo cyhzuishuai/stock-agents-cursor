@@ -157,6 +157,10 @@ export interface SettingsResponse {
 export interface SymbolSearchResult {
   symbol: string;
   name: string;
+  price?: number | null;
+  change?: number | null;
+  change_pct?: number | null;
+  asset_class?: string;
 }
 
 // Strategies

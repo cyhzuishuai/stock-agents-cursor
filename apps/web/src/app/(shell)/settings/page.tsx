@@ -15,6 +15,33 @@ function formatScheduleSummary(strategy: Strategy): string {
   return `Pre-open ${strategy.pre_open_minutes}m · every ${strategy.intraday_every_minutes}m ${strategy.intraday_start_et}–${strategy.intraday_end_et} ET`;
 }
 
+function formatSearchPrice(price: number | null | undefined): string {
+  if (price == null || Number.isNaN(price)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(price);
+}
+
+function formatSearchChange(
+  change: number | null | undefined,
+  changePct: number | null | undefined,
+): string {
+  if (change == null || Number.isNaN(change)) return "—";
+  const sign = change > 0 ? "+" : "";
+  const abs = `${sign}${change.toFixed(2)}`;
+  if (changePct == null || Number.isNaN(changePct)) return abs;
+  const pctSign = changePct > 0 ? "+" : "";
+  return `${abs} (${pctSign}${changePct.toFixed(2)}%)`;
+}
+
+function changeClass(change: number | null | undefined): string {
+  if (change == null || change === 0 || Number.isNaN(change)) return "";
+  return change < 0
+    ? " settings__search-card-change--down"
+    : " settings__search-card-change--up";
+}
+
 const emptyForm = (): StrategyWriteBody => ({
   name: "",
   description: "",
@@ -614,14 +641,47 @@ function WatchlistPanel({
               <li key={item.symbol}>
                 <button
                   type="button"
+                  className="settings__search-card"
                   disabled={busy}
+                  aria-label={
+                    item.name ? `${item.symbol} · ${item.name}` : item.symbol
+                  }
                   onClick={() => void addSymbol(item.symbol)}
                 >
-                  {item.symbol}
-                  {item.name ? ` · ${item.name}` : ""}
+                  <span className="settings__search-card-avatar" aria-hidden>
+                    {item.symbol.slice(0, 2).toUpperCase()}
+                  </span>
+                  <span className="settings__search-card-body">
+                    <span className="settings__search-card-top">
+                      <span className="settings__search-card-symbol">
+                        {item.symbol}
+                      </span>
+                      <span className="settings__search-card-quotes">
+                        <span className="settings__search-card-price">
+                          {formatSearchPrice(item.price)}
+                        </span>
+                        <span
+                          className={
+                            "settings__search-card-change" +
+                            changeClass(item.change)
+                          }
+                        >
+                          {formatSearchChange(item.change, item.change_pct)}
+                        </span>
+                      </span>
+                    </span>
+                    {item.name ? (
+                      <span className="settings__search-card-name">
+                        {item.name}
+                      </span>
+                    ) : null}
+                  </span>
                 </button>
               </li>
             ))}
+            <li className="settings__search-end" aria-hidden>
+              End of results
+            </li>
           </ul>
         ) : null}
       </div>

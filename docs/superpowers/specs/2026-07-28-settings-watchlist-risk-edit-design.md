@@ -2,13 +2,13 @@
 
 **Date:** 2026-07-28  
 **Status:** Approved for implementation planning  
-**Approach:** Settings write APIs + `can_hold` + Yahoo search proxy + buy-side workflow gate
+**Approach:** Settings write APIs + `can_hold` + Alpaca symbol search + buy-side workflow gate
 
 ## Goal
 
 Make the Settings page able to:
 
-1. **Watchlist** — search US stock symbols (via backend market-data search), add/remove symbols, and toggle **可持仓 (`can_hold`)** per symbol with a checkbox.
+1. **Watchlist** — search US stock symbols (via Alpaca asset search), add/remove symbols, and toggle **可持仓 (`can_hold`)** per symbol with a checkbox.
 2. **Risk** — edit values of **existing** risk rules only (no create/delete of rule keys).
 3. Enforce `can_hold` in the EOD workflow so unchecked symbols cannot receive new buy fills.
 
@@ -17,7 +17,6 @@ Make the Settings page able to:
 - Creating or deleting risk rule keys
 - Changing Strategies CRUD
 - Changing agent `watchlist: string[]` contract shape
-- Alpaca-backed symbol search (Alpaca remains stub; search uses free/Yahoo path)
 - Splitting observe vs tradable into separate tables
 
 ## Current state
@@ -85,15 +84,15 @@ Update `packages/contracts/api_dto.md` and frontend `SettingsResponse` according
 
 | Method | Path | Behavior |
 |--------|------|----------|
-| `GET` | `/api/v1/symbols/search?q=` | Proxy Yahoo Finance autocomplete/search; return `[{ "symbol": "AAPL", "name": "Apple Inc." }]` |
+| `GET` | `/api/v1/symbols/search?q=` | Alpaca `us_equity` asset search + stock snapshots; return `[{ symbol, name, price?, change?, change_pct?, asset_class? }]` |
 
 Rules:
 
 - Empty or whitespace `q` → `200` with `[]`
-- Debounce is client-side; server may cap results (e.g. 10)
-- Prefer equity / US listings when the upstream payload allows filtering
-- On upstream failure → `502` with a clear error message
-- Implementation lives in Go API (HTTP client to Yahoo), matching `MARKET_DATA_PROVIDER=free` path; no Python agent call required for search
+- Debounce is client-side; server caps results at 10 (symbol prefix, then name contains)
+- Missing Alpaca credentials → `503` (`alpaca not configured`)
+- Asset list fetch failure → `502`; snapshot failure still returns symbol/name with null quotes
+- Superseded Yahoo proxy; see `2026-07-28-alpaca-symbol-search-design.md`
 
 ## Frontend (Settings page)
 
@@ -102,7 +101,7 @@ File: `apps/web/src/app/(shell)/settings/page.tsx` (and tests / types / CSS as n
 ### Watchlist panel
 
 - Search input → debounced `GET /api/v1/symbols/search?q=`
-- Dropdown: `symbol · name`; click → `POST` add (default `can_hold: true`); if already present, show inline message
+- Result cards: avatar initials, ticker, price, colored change, name; click → `POST` add (default `can_hold: true`); if already present, show inline message
 - Table columns: Symbol | 可持仓 (checkbox) | Delete
 - Checkbox change → immediate `PATCH`
 - Delete → `window.confirm` then `DELETE`

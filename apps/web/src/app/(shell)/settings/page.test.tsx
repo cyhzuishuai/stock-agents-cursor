@@ -163,7 +163,16 @@ describe("SettingsPage watchlist and risk", () => {
         const method = init?.method ?? "GET";
 
         if (url.includes("/api/v1/symbols/search")) {
-          return jsonResponse([{ symbol: "MSFT", name: "Microsoft Corporation" }]);
+          return jsonResponse([
+            {
+              symbol: "MSFT",
+              name: "Microsoft Corporation",
+              price: 420.1,
+              change: 1.2,
+              change_pct: 0.29,
+              asset_class: "us_equity",
+            },
+          ]);
         }
         if (url.includes("/api/v1/settings/watchlist") && method === "POST") {
           const body = JSON.parse(String(init?.body)) as WatchlistItem;

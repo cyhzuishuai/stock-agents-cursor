@@ -15,37 +15,54 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/httpserver"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
 	"github.com/cyh/stock-agents/services/api/internal/strategy"
+	"github.com/cyh/stock-agents/services/api/internal/symbolsearch"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-type mockYahooTransport struct {
-	body       string
-	statusCode int
-	err        error
-	lastURL    string
+type mockAlpacaTransport struct {
+	assetsBody     string
+	snapshotsBody  string
+	assetsStatus   int
+	snapshotsStatus int
+	err            error
+	paths          []string
 }
 
-func (m *mockYahooTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	m.lastURL = req.URL.String()
+func (m *mockAlpacaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	m.paths = append(m.paths, req.URL.Path)
 	if m.err != nil {
 		return nil, m.err
 	}
-	status := m.statusCode
-	if status == 0 {
-		status = http.StatusOK
+	status := http.StatusOK
+	body := "{}"
+	switch {
+	case strings.Contains(req.URL.Path, "/v2/assets"):
+		if m.assetsStatus != 0 {
+			status = m.assetsStatus
+		}
+		if m.assetsBody != "" {
+			body = m.assetsBody
+		}
+	case strings.Contains(req.URL.Path, "/v2/stocks/snapshots"):
+		if m.snapshotsStatus != 0 {
+			status = m.snapshotsStatus
+		}
+		if m.snapshotsBody != "" {
+			body = m.snapshotsBody
+		}
 	}
 	return &http.Response{
 		StatusCode: status,
-		Body:       io.NopCloser(strings.NewReader(m.body)),
+		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     make(http.Header),
 	}, nil
 }
 
 func TestSymbolSearch(t *testing.T) {
 	t.Run("empty q returns empty array", func(t *testing.T) {
-		mock := &mockYahooTransport{}
-		router, gormDB, secret := setupSymbolSearchRouter(t, mock)
+		mock := &mockAlpacaTransport{}
+		router, gormDB, secret := setupSymbolSearchRouter(t, mock, true)
 		token := bearerToken(t, secret, gormDB)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/symbols/search?q=", nil)
@@ -56,10 +73,10 @@ func TestSymbolSearch(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("status: got %d want 200 body=%s", w.Code, w.Body.String())
 		}
-		if mock.lastURL != "" {
-			t.Fatalf("expected no upstream call for empty q, got %q", mock.lastURL)
+		if len(mock.paths) != 0 {
+			t.Fatalf("expected no upstream call for empty q, got %v", mock.paths)
 		}
-		var resp []map[string]string
+		var resp []map[string]any
 		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("json: %v body=%s", err, w.Body.String())
 		}
@@ -68,11 +85,27 @@ func TestSymbolSearch(t *testing.T) {
 		}
 	})
 
-	t.Run("returns mapped equity quote", func(t *testing.T) {
-		mock := &mockYahooTransport{
-			body: `{"quotes":[{"symbol":"AAPL","shortname":"Apple Inc.","quoteType":"EQUITY","exchange":"NMS"}]}`,
+	t.Run("missing alpaca returns 503", func(t *testing.T) {
+		router, gormDB, secret := setupSymbolSearchRouter(t, nil, false)
+		token := bearerToken(t, secret, gormDB)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/symbols/search?q=aap", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status: got %d want 503 body=%s", w.Code, w.Body.String())
 		}
-		router, gormDB, secret := setupSymbolSearchRouter(t, mock)
+	})
+
+	t.Run("returns mapped asset with quote", func(t *testing.T) {
+		mock := &mockAlpacaTransport{
+			assetsBody: `[{"symbol":"AAPL","name":"Apple Inc.","class":"us_equity","status":"active"},
+				{"symbol":"AAAA","name":"Amplius ETF","class":"us_equity","status":"active"}]`,
+			snapshotsBody: `{"AAPL":{"latestTrade":{"p":190.5},"prevDailyBar":{"c":189.0}}}`,
+		}
+		router, gormDB, secret := setupSymbolSearchRouter(t, mock, true)
 		token := bearerToken(t, secret, gormDB)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/symbols/search?q=aap", nil)
@@ -83,29 +116,28 @@ func TestSymbolSearch(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("status: got %d want 200 body=%s", w.Code, w.Body.String())
 		}
-		if !strings.Contains(mock.lastURL, "q=aap") {
-			t.Fatalf("upstream URL: got %q", mock.lastURL)
-		}
-		var resp []map[string]string
+		var resp []map[string]any
 		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("json: %v body=%s", err, w.Body.String())
 		}
 		if len(resp) != 1 {
-			t.Fatalf("len: got %d want 1", len(resp))
+			t.Fatalf("len: got %d want 1 (%v)", len(resp), resp)
 		}
 		if resp[0]["symbol"] != "AAPL" || resp[0]["name"] != "Apple Inc." {
 			t.Fatalf("result: got %+v", resp[0])
 		}
+		if resp[0]["price"].(float64) != 190.5 {
+			t.Fatalf("price: got %v", resp[0]["price"])
+		}
 	})
 
-	t.Run("prefers EQUITY over other quote types", func(t *testing.T) {
-		mock := &mockYahooTransport{
-			body: `{"quotes":[
-				{"symbol":"AAP","shortname":"Advance Auto Parts","quoteType":"EQUITY"},
-				{"symbol":"AAPL.NEWS","shortname":"Apple News","quoteType":"NEWS"}
-			]}`,
+	t.Run("prefix ranking prefers shorter symbol", func(t *testing.T) {
+		mock := &mockAlpacaTransport{
+			assetsBody: `[{"symbol":"AAPL","name":"Apple Inc.","class":"us_equity"},
+				{"symbol":"AAP","name":"Advance Auto Parts","class":"us_equity"}]`,
+			snapshotsBody: `{}`,
 		}
-		router, gormDB, secret := setupSymbolSearchRouter(t, mock)
+		router, gormDB, secret := setupSymbolSearchRouter(t, mock, true)
 		token := bearerToken(t, secret, gormDB)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/symbols/search?q=aap", nil)
@@ -116,18 +148,47 @@ func TestSymbolSearch(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("status: got %d body=%s", w.Code, w.Body.String())
 		}
-		var resp []map[string]string
+		var resp []map[string]any
 		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("json: %v", err)
 		}
-		if len(resp) != 1 || resp[0]["symbol"] != "AAP" {
-			t.Fatalf("expected only EQUITY quote, got %v", resp)
+		if len(resp) != 2 || resp[0]["symbol"] != "AAP" {
+			t.Fatalf("expected AAP first, got %v", resp)
 		}
 	})
 
-	t.Run("upstream failure returns 502", func(t *testing.T) {
-		mock := &mockYahooTransport{err: io.ErrUnexpectedEOF}
-		router, gormDB, secret := setupSymbolSearchRouter(t, mock)
+	t.Run("snapshot failure still returns symbol name", func(t *testing.T) {
+		mock := &mockAlpacaTransport{
+			assetsBody:      `[{"symbol":"MSFT","name":"Microsoft Corporation","class":"us_equity"}]`,
+			snapshotsStatus: http.StatusInternalServerError,
+			snapshotsBody:   "err",
+		}
+		router, gormDB, secret := setupSymbolSearchRouter(t, mock, true)
+		token := bearerToken(t, secret, gormDB)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/symbols/search?q=msft", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status: got %d body=%s", w.Code, w.Body.String())
+		}
+		var resp []map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		if len(resp) != 1 || resp[0]["symbol"] != "MSFT" {
+			t.Fatalf("got %v", resp)
+		}
+		if resp[0]["price"] != nil {
+			t.Fatalf("expected null price, got %v", resp[0]["price"])
+		}
+	})
+
+	t.Run("upstream asset failure returns 502", func(t *testing.T) {
+		mock := &mockAlpacaTransport{err: io.ErrUnexpectedEOF}
+		router, gormDB, secret := setupSymbolSearchRouter(t, mock, true)
 		token := bearerToken(t, secret, gormDB)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/symbols/search?q=aap", nil)
@@ -141,7 +202,7 @@ func TestSymbolSearch(t *testing.T) {
 	})
 }
 
-func setupSymbolSearchRouter(t *testing.T, mock *mockYahooTransport) (*gin.Engine, *gorm.DB, string) {
+func setupSymbolSearchRouter(t *testing.T, mock *mockAlpacaTransport, withSearch bool) (*gin.Engine, *gorm.DB, string) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -161,9 +222,13 @@ func setupSymbolSearchRouter(t *testing.T, mock *mockYahooTransport) (*gin.Engin
 		RiskMaxOrderNotional:    10000,
 		RiskMaxSingleNameWeight: 0.20,
 		RiskMinCashRatio:        0.10,
-		MarketDataProvider:      "free",
+		MarketDataProvider:      "alpaca",
 		InternalEODToken:        "internal-secret",
 		JWTSecret:               "test-jwt-secret",
+		AlpacaAPIKey:            "test-key",
+		AlpacaAPISecret:         "test-secret",
+		AlpacaBaseURL:           "https://paper.test",
+		AlpacaDataBaseURL:       "https://data.test",
 	}
 	if err := db.Seed(gormDB, cfg); err != nil {
 		t.Fatalf("Seed: %v", err)
@@ -173,16 +238,22 @@ func setupSymbolSearchRouter(t *testing.T, mock *mockYahooTransport) (*gin.Engin
 	approvalsSvc := &approvals.Service{DB: gormDB, Ledger: ledgerSvc}
 	strategiesSvc := &strategy.Service{DB: gormDB}
 
+	var searcher *symbolsearch.Client
+	if withSearch {
+		httpClient := &http.Client{Transport: mock}
+		searcher = symbolsearch.NewFromConfig(cfg, httpClient)
+	}
+
 	router := httpserver.NewRouter(httpserver.RouterDeps{
-		DB:         gormDB,
-		JWTSecret:  cfg.JWTSecret,
-		Runner:     &stubRunner{runID: 99},
-		Approvals:  approvalsSvc,
-		Ledger:     ledgerSvc,
-		Config:     cfg,
-		Strategies: strategiesSvc,
-		Scheduler:  httpserver.NoopSchedulerReloader{},
-		HTTPClient: &http.Client{Transport: mock},
+		DB:           gormDB,
+		JWTSecret:    cfg.JWTSecret,
+		Runner:       &stubRunner{runID: 99},
+		Approvals:    approvalsSvc,
+		Ledger:       ledgerSvc,
+		Config:       cfg,
+		Strategies:   strategiesSvc,
+		Scheduler:    httpserver.NoopSchedulerReloader{},
+		SymbolSearch: searcher,
 	})
 	return router, gormDB, cfg.JWTSecret
 }
