@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -22,6 +23,7 @@ const tradeDate = "2026-07-22"
 type fakeBroker struct {
 	mu          sync.Mutex
 	submitCalls []broker.OrderRequest
+	submitErr   error
 	get         map[string]broker.Order
 	nextID      int
 	acct        broker.Account
@@ -39,6 +41,9 @@ func (f *fakeBroker) SubmitOrder(ctx context.Context, req broker.OrderRequest) (
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.submitCalls = append(f.submitCalls, req)
+	if f.submitErr != nil {
+		return broker.Order{}, f.submitErr
+	}
 	f.nextID++
 	id := fmt.Sprintf("brk-%d", f.nextID)
 	o := broker.Order{
@@ -193,6 +198,94 @@ func TestDecideApprovedFillsAndExecutesRun(t *testing.T) {
 	}
 	if nav.Nav != 100000 {
 		t.Fatalf("nav: got %v want 100000", nav.Nav)
+	}
+}
+
+func TestDecideApprovedNilBrokerReturnsErrBrokerNotConfigured(t *testing.T) {
+	svc, gormDB, runID, approvalID := setupPendingApproval(t, nil)
+
+	err := svc.Decide(context.Background(), approvalID, approvals.DecisionApproved, "ok", 1)
+	if !errors.Is(err, workflow.ErrBrokerNotConfigured) {
+		t.Fatalf("Decide: got %v want ErrBrokerNotConfigured", err)
+	}
+
+	var approval models.Approval
+	if err := gormDB.First(&approval, approvalID).Error; err != nil {
+		t.Fatalf("approval: %v", err)
+	}
+	if approval.Status != workflow.ApprovalPending {
+		t.Fatalf("approval status: got %q want pending", approval.Status)
+	}
+
+	var proposal models.TradeProposal
+	if err := gormDB.Where("run_id = ?", runID).First(&proposal).Error; err != nil {
+		t.Fatalf("proposal: %v", err)
+	}
+	if proposal.Status != workflow.ProposalAwaitingApproval {
+		t.Fatalf("proposal status: got %q want awaiting_approval", proposal.Status)
+	}
+
+	var orders int64
+	if err := gormDB.Model(&models.Order{}).Count(&orders).Error; err != nil {
+		t.Fatalf("orders: %v", err)
+	}
+	if orders != 0 {
+		t.Fatalf("orders: got %d want 0", orders)
+	}
+}
+
+func TestDecideApprovedSubmitOrderErrorRejectsProposal(t *testing.T) {
+	submitErr := errors.New("insufficient buying power")
+	fb := &fakeBroker{
+		acct:      broker.Account{Cash: 100000, Equity: 100000},
+		submitErr: submitErr,
+	}
+	svc, gormDB, runID, approvalID := setupPendingApproval(t, fb)
+
+	err := svc.Decide(context.Background(), approvalID, approvals.DecisionApproved, "ok", 1)
+	if !errors.Is(err, workflow.ErrSubmitOrder) {
+		t.Fatalf("Decide: got %v want ErrSubmitOrder", err)
+	}
+
+	var approval models.Approval
+	if err := gormDB.First(&approval, approvalID).Error; err != nil {
+		t.Fatalf("approval: %v", err)
+	}
+	if approval.Status != workflow.ApprovalApproved {
+		t.Fatalf("approval status: got %q want approved", approval.Status)
+	}
+	if approval.Note != "ok" || approval.DecidedBy == nil || *approval.DecidedBy != 1 {
+		t.Fatalf("approval: %+v", approval)
+	}
+
+	var proposal models.TradeProposal
+	if err := gormDB.Where("run_id = ?", runID).First(&proposal).Error; err != nil {
+		t.Fatalf("proposal: %v", err)
+	}
+	if proposal.Status != workflow.ProposalRejected {
+		t.Fatalf("proposal status: got %q want rejected", proposal.Status)
+	}
+	if !strings.Contains(proposal.BreachReasonsJSON, "broker:") {
+		t.Fatalf("proposal breach reasons: %s", proposal.BreachReasonsJSON)
+	}
+	if !strings.Contains(proposal.BreachReasonsJSON, submitErr.Error()) {
+		t.Fatalf("proposal breach reasons must include submit error: %s", proposal.BreachReasonsJSON)
+	}
+
+	var orders int64
+	if err := gormDB.Model(&models.Order{}).Count(&orders).Error; err != nil {
+		t.Fatalf("orders: %v", err)
+	}
+	if orders != 0 {
+		t.Fatalf("orders: got %d want 0", orders)
+	}
+
+	var run models.WorkflowRun
+	if err := gormDB.First(&run, runID).Error; err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if run.Status != workflow.StatusExecuted {
+		t.Fatalf("run status: got %q want executed", run.Status)
 	}
 }
 
