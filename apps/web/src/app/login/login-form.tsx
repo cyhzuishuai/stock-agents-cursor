@@ -30,8 +30,8 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <div>
+    <form className="login__form" onSubmit={handleSubmit}>
+      <div className="login__field">
         <label htmlFor="username">Username</label>
         <input
           id="username"
@@ -43,7 +43,7 @@ export function LoginForm() {
           required
         />
       </div>
-      <div>
+      <div className="login__field">
         <label htmlFor="password">Password</label>
         <input
           id="password"
@@ -55,8 +55,12 @@ export function LoginForm() {
           required
         />
       </div>
-      {error ? <p role="alert">{error}</p> : null}
-      <button type="submit" disabled={loading}>
+      {error ? (
+        <p className="alert" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <button className="btn btn--primary" type="submit" disabled={loading}>
         Log in
       </button>
     </form>
