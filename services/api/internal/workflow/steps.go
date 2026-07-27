@@ -10,11 +10,11 @@ const (
 	StepPortfolio = "portfolio"
 	StepRisk      = "risk"
 
-	StatusCreated           = "created"
-	StatusFailed            = "failed"
-	StatusAwaitingApproval  = "awaiting_approval"
-	StatusExecuted          = "executed"
-	StatusCancelled         = "cancelled"
+	StatusCreated          = "created"
+	StatusFailed           = "failed"
+	StatusAwaitingApproval = "awaiting_approval"
+	StatusExecuted         = "executed"
+	StatusCancelled        = "cancelled"
 
 	ProposalPendingAuto      = "pending_auto"
 	ProposalAwaitingApproval = "awaiting_approval"
@@ -43,6 +43,9 @@ const (
 	DefaultLockTTL   = 30 * time.Minute
 	DataAgentTimeout = 60 * time.Second
 	LLMAgentTimeout  = 120 * time.Second
+
+	BrokerSyncTimeout      = 15 * time.Second
+	BrokerSyncPollInterval = 250 * time.Millisecond
 )
 
 // AgentStep describes one sequential agent call in the EOD chain.
