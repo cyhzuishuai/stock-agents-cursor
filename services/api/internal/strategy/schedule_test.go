@@ -18,6 +18,7 @@ func contains(items []string, want string) bool {
 
 func TestBuildJobSpecsDefaultStrategy(t *testing.T) {
 	s := models.Strategy{
+		Name:                 "Test Strategy",
 		PreOpenMinutes:       10,
 		IntradayEveryMinutes: 60,
 		IntradayStartET:      "10:00",
@@ -47,6 +48,7 @@ func TestBuildJobSpecsDefaultStrategy(t *testing.T) {
 
 func TestBuildJobSpecsNoPreOpenWhenZero(t *testing.T) {
 	s := models.Strategy{
+		Name:                 "Test Strategy",
 		PreOpenMinutes:       0,
 		IntradayEveryMinutes: 60,
 		IntradayStartET:      "10:00",
@@ -66,6 +68,7 @@ func TestBuildJobSpecsNoPreOpenWhenZero(t *testing.T) {
 
 func TestBuildJobSpecsNoIntradayWhenZero(t *testing.T) {
 	s := models.Strategy{
+		Name:                 "Test Strategy",
 		PreOpenMinutes:       10,
 		IntradayEveryMinutes: 0,
 		IntradayStartET:      "10:00",
@@ -85,6 +88,7 @@ func TestBuildJobSpecsNoIntradayWhenZero(t *testing.T) {
 
 func TestBuildJobSpecsInvalidTime(t *testing.T) {
 	s := models.Strategy{
+		Name:                 "Test Strategy",
 		PreOpenMinutes:       10,
 		IntradayEveryMinutes: 60,
 		IntradayStartET:      "bad",
@@ -99,6 +103,7 @@ func TestBuildJobSpecsInvalidTime(t *testing.T) {
 
 func TestBuildJobSpecsInvalidInterval(t *testing.T) {
 	s := models.Strategy{
+		Name:                 "Test Strategy",
 		PreOpenMinutes:       10,
 		IntradayEveryMinutes: 10,
 		IntradayStartET:      "10:00",

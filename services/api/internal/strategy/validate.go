@@ -13,6 +13,10 @@ const (
 )
 
 func ValidateStrategyFields(s models.Strategy) error {
+	if strings.TrimSpace(s.Name) == "" {
+		return fmt.Errorf("name is required")
+	}
+
 	switch s.ExecutionMode {
 	case ExecutionModeAutoReject, ExecutionModeRequireApproval:
 	default:

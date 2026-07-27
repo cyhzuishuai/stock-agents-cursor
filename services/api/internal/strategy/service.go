@@ -13,6 +13,7 @@ var (
 	ErrNotFound   = errors.New("strategy not found")
 	ErrForbidden  = errors.New("strategy operation forbidden")
 	ErrValidation = errors.New("strategy validation failed")
+	ErrInvariant  = errors.New("strategy invariant violated")
 )
 
 type Service struct{ DB *gorm.DB }
@@ -109,6 +110,13 @@ func (s *Service) Activate(ctx context.Context, id uint) (models.Strategy, error
 		}
 		if res.RowsAffected == 0 {
 			return ErrNotFound
+		}
+		var activeCount int64
+		if err := tx.Model(&models.Strategy{}).Where("is_active = ?", true).Count(&activeCount).Error; err != nil {
+			return err
+		}
+		if activeCount != 1 {
+			return ErrInvariant
 		}
 		return tx.First(&st, id).Error
 	})

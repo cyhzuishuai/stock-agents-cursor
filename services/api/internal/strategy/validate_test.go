@@ -8,6 +8,7 @@ import (
 
 func validStrategy() models.Strategy {
 	return models.Strategy{
+		Name:                 "Test Strategy",
 		PreOpenMinutes:       10,
 		IntradayEveryMinutes: 60,
 		IntradayStartET:      "10:00",
@@ -19,6 +20,16 @@ func validStrategy() models.Strategy {
 func TestValidateStrategyFieldsValid(t *testing.T) {
 	if err := ValidateStrategyFields(validStrategy()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateStrategyFieldsEmptyName(t *testing.T) {
+	for _, name := range []string{"", " ", "\t"} {
+		s := validStrategy()
+		s.Name = name
+		if err := ValidateStrategyFields(s); err == nil {
+			t.Fatalf("expected error for name %q", name)
+		}
 	}
 }
 

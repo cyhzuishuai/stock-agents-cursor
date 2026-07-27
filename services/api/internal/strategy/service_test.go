@@ -153,6 +153,35 @@ func TestDeleteActiveForbidden(t *testing.T) {
 	}
 }
 
+func TestCreateEmptyNameValidationError(t *testing.T) {
+	svc, _ := setupService(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"", " ", "\t"} {
+		in := validCreateInput(name)
+		_, err := svc.Create(ctx, in)
+		if !errors.Is(err, ErrValidation) {
+			t.Fatalf("Create name %q: got %v want ErrValidation", name, err)
+		}
+	}
+}
+
+func TestUpdateEmptyNameValidationError(t *testing.T) {
+	svc, _ := setupService(t)
+	ctx := context.Background()
+
+	created, err := svc.Create(ctx, validCreateInput("Update Target"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	in := validCreateInput(" ")
+	_, err = svc.Update(ctx, created.ID, UpdateInput(in))
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("Update empty name: got %v want ErrValidation", err)
+	}
+}
+
 func TestCreateInvalidExecutionModeValidationError(t *testing.T) {
 	svc, _ := setupService(t)
 	ctx := context.Background()
