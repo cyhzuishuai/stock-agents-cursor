@@ -31,6 +31,8 @@ describe("OverviewDashboard", () => {
     render(<OverviewDashboard data={fixture} />);
 
     expect(screen.getByRole("heading", { name: /overview/i })).toBeTruthy();
+    expect(screen.getByText(/eod desk/i)).toBeTruthy();
+    expect(screen.getByText("NAV")).toBeTruthy();
     expect(screen.getByText("$50,000")).toBeTruthy();
     expect(screen.getByText("$200,000")).toBeTruthy();
     expect(

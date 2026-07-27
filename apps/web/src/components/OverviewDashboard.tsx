@@ -18,40 +18,47 @@ const percent = new Intl.NumberFormat("en-US", {
 export function OverviewDashboard({ data }: { data: OverviewResponse }) {
   return (
     <div className="overview">
-      <h1 className="overview__title">Overview</h1>
+      <header className="page-header">
+        <p className="page-header__eyebrow">EOD desk</p>
+        <h1 className="page-header__title">Overview</h1>
+      </header>
 
-      <section className="overview__stats" aria-label="Account summary">
-        <div className="overview__stat">
-          <span className="overview__stat-label">Cash</span>
-          <span className="overview__stat-value">{currency.format(data.cash)}</span>
+      <section className="stat-grid" aria-label="Account summary">
+        <div className="stat stat--emphasis">
+          <span className="stat__label">NAV</span>
+          <span className="stat__value">{currency.format(data.nav)}</span>
         </div>
-        <div className="overview__stat">
-          <span className="overview__stat-label">Equity</span>
-          <span className="overview__stat-value">
-            {currency.format(data.equity)}
-          </span>
+        <div className="stat">
+          <span className="stat__label">Equity</span>
+          <span className="stat__value">{currency.format(data.equity)}</span>
         </div>
-        <div className="overview__stat">
-          <span className="overview__stat-label">NAV</span>
-          <span className="overview__stat-value">{currency.format(data.nav)}</span>
+        <div className="stat">
+          <span className="stat__label">Cash</span>
+          <span className="stat__value">{currency.format(data.cash)}</span>
         </div>
       </section>
 
-      <section className="overview__panel">
-        <h2 className="overview__panel-title">Pending approvals</h2>
-        <p>
-          {data.pending_approvals_count === 0 ? (
-            "None pending"
-          ) : (
+      <section
+        className={
+          data.pending_approvals_count > 0
+            ? "pending-strip"
+            : "pending-strip pending-strip--clear"
+        }
+        aria-label="Pending approvals"
+      >
+        {data.pending_approvals_count === 0 ? (
+          <p className="empty-state">None pending</p>
+        ) : (
+          <p>
             <Link href="/approvals">
               {data.pending_approvals_count} pending — review
             </Link>
-          )}
-        </p>
+          </p>
+        )}
       </section>
 
-      <section className="overview__panel">
-        <h2 className="overview__panel-title">Latest run</h2>
+      <section className="panel">
+        <h2 className="panel__title">Latest run</h2>
         {data.latest_run ? (
           <p className="overview__run">
             <Link href={`/runs/${data.latest_run.id}`}>
@@ -63,42 +70,44 @@ export function OverviewDashboard({ data }: { data: OverviewResponse }) {
             <RunStatusBadge status={data.latest_run.status} />
           </p>
         ) : (
-          <p>No runs yet</p>
+          <p className="empty-state">No runs yet</p>
         )}
       </section>
 
-      <section className="overview__panel">
-        <h2 className="overview__panel-title">Positions</h2>
-        {data.positions_summary.length === 0 ? (
-          <p>No open positions</p>
-        ) : (
-          <table className="overview__table">
-            <thead>
-              <tr>
-                <th scope="col">Symbol</th>
-                <th scope="col">Qty</th>
-                <th scope="col">Market value</th>
-                <th scope="col">Weight</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.positions_summary.map((row) => (
-                <tr key={row.symbol}>
-                  <td>{row.symbol}</td>
-                  <td>{row.qty}</td>
-                  <td>{currency.format(row.market_value)}</td>
-                  <td>{percent.format(row.weight)}</td>
+      <div className="overview__split">
+        <section className="panel">
+          <h2 className="panel__title">Positions</h2>
+          {data.positions_summary.length === 0 ? (
+            <p className="empty-state">No open positions</p>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Symbol</th>
+                  <th scope="col">Qty</th>
+                  <th scope="col">Market value</th>
+                  <th scope="col">Weight</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+              </thead>
+              <tbody>
+                {data.positions_summary.map((row) => (
+                  <tr key={row.symbol}>
+                    <td>{row.symbol}</td>
+                    <td>{row.qty}</td>
+                    <td>{currency.format(row.market_value)}</td>
+                    <td>{percent.format(row.weight)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
 
-      <section className="overview__panel">
-        <h2 className="overview__panel-title">NAV history</h2>
-        <NavSparkline series={data.nav_series} />
-      </section>
+        <section className="panel">
+          <h2 className="panel__title">NAV history</h2>
+          <NavSparkline series={data.nav_series} />
+        </section>
+      </div>
     </div>
   );
 }
