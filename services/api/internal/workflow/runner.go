@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/cyh/stock-agents/services/api/internal/agentsclient"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
@@ -276,10 +277,30 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 		return nil, false, err
 	}
 
+	canHold, err := r.loadCanHoldMap(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
 	pendingApprovals := false
 	anyFill := false
 	for i := range proposals {
 		p := &proposals[i]
+		if strings.EqualFold(p.Side, "buy") && !canHold[p.Symbol] {
+			reasons, err := json.Marshal([]string{"not_holdable"})
+			if err != nil {
+				return nil, anyFill, err
+			}
+			p.Status = ProposalRejected
+			p.BreachReasonsJSON = string(reasons)
+			if err := r.DB.WithContext(ctx).Model(p).Updates(map[string]any{
+				"status":              ProposalRejected,
+				"breach_reasons_json": string(reasons),
+			}).Error; err != nil {
+				return nil, anyFill, err
+			}
+			continue
+		}
 		fillPrice, ok := marks[p.Symbol]
 		if !ok || fillPrice <= 0 {
 			return nil, anyFill, fmt.Errorf("missing close for symbol %s", p.Symbol)
@@ -441,6 +462,18 @@ func (r *Runner) loadWatchlist(ctx context.Context) ([]string, error) {
 	out := make([]string, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, row.Symbol)
+	}
+	return out, nil
+}
+
+func (r *Runner) loadCanHoldMap(ctx context.Context) (map[string]bool, error) {
+	var rows []models.WatchlistSymbol
+	if err := r.DB.WithContext(ctx).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("load can_hold map: %w", err)
+	}
+	out := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		out[row.Symbol] = row.CanHold
 	}
 	return out, nil
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -431,6 +432,10 @@ func TestRunEODMidFillFailureSetsTerminalFailed(t *testing.T) {
 		portfolio: `{"proposals":[{"symbol":"AAPL","side":"buy","qty":10,"estimated_notional":1910,"estimated_cash_impact":-1910},{"symbol":"MSFT","side":"buy","qty":5,"estimated_notional":1000,"estimated_cash_impact":-1000}],"warnings":[]}`,
 		risk:      `{"items":[],"warnings":[]}`,
 	})
+	// MSFT must be holdable so the failure path is missing close, not not_holdable.
+	if err := env.db.Create(&models.WatchlistSymbol{Symbol: "MSFT", CanHold: true}).Error; err != nil {
+		t.Fatalf("seed MSFT: %v", err)
+	}
 
 	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
 	if err == nil {
@@ -701,4 +706,89 @@ func portfolioBuyJSON(qty, notional, cashImpact float64) string {
 		`{"proposals":[{"symbol":"AAPL","side":"buy","qty":%v,"estimated_notional":%v,"estimated_cash_impact":%v}],"warnings":[]}`,
 		qty, notional, cashImpact,
 	)
+}
+
+func portfolioSellJSON(qty, notional, cashImpact float64) string {
+	return fmt.Sprintf(
+		`{"proposals":[{"symbol":"AAPL","side":"sell","qty":%v,"estimated_notional":%v,"estimated_cash_impact":%v}],"warnings":[]}`,
+		qty, notional, cashImpact,
+	)
+}
+
+func TestRunEODBuyRejectedWhenNotHoldable(t *testing.T) {
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioBuyJSON(10, 1910, -1910),
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{"liquidity":0.9},"suggested_action":"auto"}],"warnings":[]}`,
+	})
+	if err := env.db.Model(&models.WatchlistSymbol{}).Where("symbol = ?", "AAPL").Update("can_hold", false).Error; err != nil {
+		t.Fatalf("set can_hold: %v", err)
+	}
+
+	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunEOD: %v", err)
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 1 || proposals[0].Status != workflow.ProposalRejected {
+		t.Fatalf("proposal: got %+v", proposals)
+	}
+	if !strings.Contains(proposals[0].BreachReasonsJSON, "not_holdable") {
+		t.Fatalf("breach_reasons_json: got %q want not_holdable", proposals[0].BreachReasonsJSON)
+	}
+
+	var orders int64
+	if err := env.db.Model(&models.Order{}).Count(&orders).Error; err != nil {
+		t.Fatalf("orders: %v", err)
+	}
+	if orders != 0 {
+		t.Fatalf("orders: got %d want 0", orders)
+	}
+}
+
+func TestRunEODSellAllowedWhenNotHoldable(t *testing.T) {
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bear","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"sell","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioSellJSON(5, 955, 955),
+		risk:      `{"items":[{"symbol":"AAPL","side":"sell","flags":["size_ok"],"scores":{"liquidity":0.9},"suggested_action":"auto"}],"warnings":[]}`,
+	})
+	if err := env.db.Model(&models.WatchlistSymbol{}).Where("symbol = ?", "AAPL").Update("can_hold", false).Error; err != nil {
+		t.Fatalf("set can_hold: %v", err)
+	}
+	var account models.Account
+	if err := env.db.First(&account).Error; err != nil {
+		t.Fatalf("account: %v", err)
+	}
+	if err := env.db.Create(&models.Position{
+		AccountID: account.ID,
+		Symbol:    "AAPL",
+		Qty:       10,
+		AvgCost:   180,
+	}).Error; err != nil {
+		t.Fatalf("seed position: %v", err)
+	}
+
+	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunEOD: %v", err)
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 1 || proposals[0].Status != workflow.ProposalFilled {
+		t.Fatalf("proposal: got %+v want filled", proposals)
+	}
+	if strings.Contains(proposals[0].BreachReasonsJSON, "not_holdable") {
+		t.Fatalf("sell should not be rejected as not_holdable: %q", proposals[0].BreachReasonsJSON)
+	}
 }
