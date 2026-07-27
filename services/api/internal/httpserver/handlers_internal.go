@@ -22,5 +22,6 @@ func (h *API) InternalEOD(c *gin.Context) {
 	if tradeDate == "" {
 		tradeDate = defaultTradeDate()
 	}
-	h.triggerEOD(c, tradeDate)
+	force := req.Force || queryForce(c)
+	h.triggerEOD(c, tradeDate, force)
 }

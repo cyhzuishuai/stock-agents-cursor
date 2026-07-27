@@ -161,6 +161,34 @@ func TestCancelRunOnAwaitingApprovalCancelsAndUpsertsNAV(t *testing.T) {
 	}
 }
 
+func TestDecideApprovedTwiceDoesNotDoubleFill(t *testing.T) {
+	svc, gormDB, _, approvalID := setupPendingApproval(t)
+
+	if err := svc.Decide(context.Background(), approvalID, approvals.DecisionApproved, "ok", 1); err != nil {
+		t.Fatalf("Decide first: %v", err)
+	}
+	err := svc.Decide(context.Background(), approvalID, approvals.DecisionApproved, "again", 1)
+	if !errors.Is(err, approvals.ErrApprovalNotPending) {
+		t.Fatalf("Decide second: got %v want ErrApprovalNotPending", err)
+	}
+
+	var orders int64
+	if err := gormDB.Model(&models.Order{}).Count(&orders).Error; err != nil {
+		t.Fatalf("orders: %v", err)
+	}
+	if orders != 1 {
+		t.Fatalf("orders: got %d want 1 (no double fill)", orders)
+	}
+
+	var account models.Account
+	if err := gormDB.First(&account).Error; err != nil {
+		t.Fatalf("account: %v", err)
+	}
+	if account.Cash != 100000-19100 {
+		t.Fatalf("cash: got %v want %v (no double debit)", account.Cash, 100000-19100)
+	}
+}
+
 func TestCancelRunOnExecutedDoesNotFlipToCancelled(t *testing.T) {
 	svc, gormDB, runID, approvalID := setupPendingApproval(t)
 

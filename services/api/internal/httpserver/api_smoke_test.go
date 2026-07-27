@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -27,13 +28,13 @@ type stubRunner struct {
 	err           error
 }
 
-func (s *stubRunner) RunEOD(_ context.Context, tradeDate string) (uint, error) {
+func (s *stubRunner) RunEOD(_ context.Context, tradeDate string, _ bool) (uint, error) {
 	s.lastTradeDate = tradeDate
-	if s.err != nil {
-		return 0, s.err
-	}
 	if s.runID == 0 {
 		s.runID = 42
+	}
+	if s.err != nil {
+		return s.runID, s.err
 	}
 	return s.runID, nil
 }
@@ -327,6 +328,34 @@ func TestRunsDetailAndEODAndCancel(t *testing.T) {
 		}
 		if runner.lastTradeDate != "2026-07-24" {
 			t.Fatalf("trade_date: got %q", runner.lastTradeDate)
+		}
+	})
+
+	t.Run("post eod failure includes run_id", func(t *testing.T) {
+		runner.err = errors.New("mid-fill boom")
+		runner.runID = 77
+		t.Cleanup(func() {
+			runner.err = nil
+			runner.runID = 99
+		})
+		body, _ := json.Marshal(map[string]string{"trade_date": "2026-07-26"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/eod", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("status: got %d want 500 body=%s", w.Code, w.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		if resp["error"] == nil || resp["error"] == "" {
+			t.Fatalf("expected error field: %v", resp)
+		}
+		if uint(resp["run_id"].(float64)) != 77 {
+			t.Fatalf("run_id: got %v want 77", resp["run_id"])
 		}
 	})
 

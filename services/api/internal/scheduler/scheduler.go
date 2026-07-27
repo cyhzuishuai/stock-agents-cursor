@@ -25,7 +25,7 @@ const (
 
 // EODRunner runs the end-of-day workflow for a trade date.
 type EODRunner interface {
-	RunEOD(ctx context.Context, tradeDate string) (uint, error)
+	RunEOD(ctx context.Context, tradeDate string, force bool) (uint, error)
 }
 
 // Options configures the EOD scheduler.
@@ -124,7 +124,7 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		return nil
 	}
 	tradeDate := TradeDate(now, s.loc)
-	_, err = s.runner.RunEOD(ctx, tradeDate)
+	_, err = s.runner.RunEOD(ctx, tradeDate, false)
 	return err
 }
 

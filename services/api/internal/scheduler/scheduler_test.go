@@ -73,7 +73,7 @@ type recordingRunner struct {
 	tradeDates []string
 }
 
-func (r *recordingRunner) RunEOD(_ context.Context, tradeDate string) (uint, error) {
+func (r *recordingRunner) RunEOD(_ context.Context, tradeDate string, _ bool) (uint, error) {
 	r.tradeDates = append(r.tradeDates, tradeDate)
 	return 1, nil
 }

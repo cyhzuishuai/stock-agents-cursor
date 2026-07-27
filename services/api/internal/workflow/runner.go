@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -12,6 +13,13 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/risk"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+)
+
+var (
+	// ErrTradeDateExists is returned when a non-failed/non-cancelled run already exists for the trade date.
+	ErrTradeDateExists = errors.New("eod run already exists for trade_date")
+	// ErrInvalidPortfolioSchema is returned when portfolio agent output fails schema checks.
+	ErrInvalidPortfolioSchema = errors.New("invalid portfolio_result schema")
 )
 
 // LedgerAPI is the ledger surface used by the EOD runner.
@@ -30,11 +38,11 @@ type Runner struct {
 }
 
 type agentRunRequest struct {
-	RunID             string                 `json:"run_id"`
-	TradeDate         string                 `json:"trade_date"`
-	Watchlist         []string               `json:"watchlist"`
-	AccountSnapshot   ledger.AccountSnapshot `json:"account_snapshot"`
-	PriorStepOutputs  map[string]any         `json:"prior_step_outputs"`
+	RunID            string                 `json:"run_id"`
+	TradeDate        string                 `json:"trade_date"`
+	Watchlist        []string               `json:"watchlist"`
+	AccountSnapshot  ledger.AccountSnapshot `json:"account_snapshot"`
+	PriorStepOutputs map[string]any         `json:"prior_step_outputs"`
 }
 
 type dataBar struct {
@@ -61,12 +69,24 @@ type portfolioResult struct {
 	Proposals []portfolioProposal `json:"proposals"`
 }
 
-func (r *Runner) RunEOD(ctx context.Context, tradeDate string) (runID uint, err error) {
+func (r *Runner) RunEOD(ctx context.Context, tradeDate string, force bool) (runID uint, err error) {
 	unlock, err := AcquireEODLock(ctx, r.Redis, tradeDate, DefaultLockTTL)
 	if err != nil {
 		return 0, err
 	}
 	defer unlock()
+
+	if !force {
+		var existing int64
+		if err := r.DB.WithContext(ctx).Model(&models.WorkflowRun{}).
+			Where("trade_date = ? AND status NOT IN ?", tradeDate, []string{StatusFailed, StatusCancelled}).
+			Count(&existing).Error; err != nil {
+			return 0, fmt.Errorf("check existing eod run: %w", err)
+		}
+		if existing > 0 {
+			return 0, fmt.Errorf("%w: %s", ErrTradeDateExists, tradeDate)
+		}
+	}
 
 	run := models.WorkflowRun{
 		TradeDate: tradeDate,
@@ -80,11 +100,11 @@ func (r *Runner) RunEOD(ctx context.Context, tradeDate string) (runID uint, err 
 }
 
 func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun) error {
-	marks, preserveStatus, err := r.runEODThroughFills(ctx, run)
+	marks, anyFill, err := r.runEODThroughFills(ctx, run)
 	if err != nil {
-		// failRun only for pre-fill failures. After ledger fills or terminal
-		// executed/awaiting_approval, preserve that status.
-		if !preserveStatus && !isPostFillStatus(run.Status) {
+		if anyFill {
+			_ = r.finalizeAfterPartialFill(ctx, run, err)
+		} else if !isPostFillStatus(run.Status) {
 			_ = r.failRun(ctx, run, err)
 		}
 		return err
@@ -99,6 +119,47 @@ func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun) error {
 
 func isPostFillStatus(status string) bool {
 	return status == StatusExecuted || status == StatusAwaitingApproval
+}
+
+// finalizeAfterPartialFill sets a terminal run status after at least one successful fill
+// followed by a later error: cancel pending_auto orphans; awaiting_approval if pending
+// approvals remain, else failed.
+func (r *Runner) finalizeAfterPartialFill(ctx context.Context, run *models.WorkflowRun, cause error) error {
+	if err := r.DB.WithContext(ctx).Model(&models.TradeProposal{}).
+		Where("run_id = ? AND status = ?", run.ID, ProposalPendingAuto).
+		Update("status", ProposalCancelled).Error; err != nil {
+		return fmt.Errorf("cancel pending_auto orphans: %w", err)
+	}
+
+	var pendingApprovals int64
+	if err := r.DB.WithContext(ctx).Model(&models.Approval{}).
+		Joins("JOIN trade_proposals ON trade_proposals.id = approvals.proposal_id").
+		Where("trade_proposals.run_id = ? AND approvals.status = ?", run.ID, ApprovalPending).
+		Count(&pendingApprovals).Error; err != nil {
+		return fmt.Errorf("count pending approvals: %w", err)
+	}
+
+	var awaitingProposals int64
+	if err := r.DB.WithContext(ctx).Model(&models.TradeProposal{}).
+		Where("run_id = ? AND status = ?", run.ID, ProposalAwaitingApproval).
+		Count(&awaitingProposals).Error; err != nil {
+		return fmt.Errorf("count awaiting proposals: %w", err)
+	}
+
+	if pendingApprovals > 0 || awaitingProposals > 0 {
+		run.ErrorMsg = cause.Error()
+		return r.DB.WithContext(ctx).Model(run).Updates(map[string]any{
+			"status":    StatusAwaitingApproval,
+			"error_msg": cause.Error(),
+		}).Error
+	}
+
+	run.Status = StatusFailed
+	run.ErrorMsg = cause.Error()
+	return r.DB.WithContext(ctx).Model(run).Updates(map[string]any{
+		"status":    StatusFailed,
+		"error_msg": cause.Error(),
+	}).Error
 }
 
 func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun) (map[string]float64, bool, error) {
@@ -162,6 +223,9 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 	portRaw, err := json.Marshal(prior[StepPortfolio])
 	if err != nil {
 		return nil, false, fmt.Errorf("marshal portfolio result: %w", err)
+	}
+	if err := validatePortfolioResult(portRaw); err != nil {
+		return nil, false, err
 	}
 	var port portfolioResult
 	if err := json.Unmarshal(portRaw, &port); err != nil {
@@ -267,6 +331,34 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 		return nil, anyFill, err
 	}
 	return marks, true, nil
+}
+
+// validatePortfolioResult checks required fields from packages/contracts/portfolio_result.schema.json.
+func validatePortfolioResult(raw []byte) error {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidPortfolioSchema, err)
+	}
+	if _, ok := probe["proposals"]; !ok {
+		return fmt.Errorf("%w: missing required field proposals", ErrInvalidPortfolioSchema)
+	}
+
+	var port portfolioResult
+	if err := json.Unmarshal(raw, &port); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidPortfolioSchema, err)
+	}
+	if port.Proposals == nil {
+		return fmt.Errorf("%w: proposals must be an array", ErrInvalidPortfolioSchema)
+	}
+	for i, p := range port.Proposals {
+		if p.Symbol == "" {
+			return fmt.Errorf("%w: proposal[%d] missing symbol", ErrInvalidPortfolioSchema, i)
+		}
+		if p.Side != "buy" && p.Side != "sell" {
+			return fmt.Errorf("%w: proposal[%d] invalid side %q", ErrInvalidPortfolioSchema, i, p.Side)
+		}
+	}
+	return nil
 }
 
 // fillNotionalAndCashImpact recomputes gate inputs from qty × fill price (EOD close).

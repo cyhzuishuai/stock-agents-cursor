@@ -16,7 +16,7 @@ import (
 
 // EODRunner triggers an end-of-day workflow run.
 type EODRunner interface {
-	RunEOD(ctx context.Context, tradeDate string) (uint, error)
+	RunEOD(ctx context.Context, tradeDate string, force bool) (uint, error)
 }
 
 // RouterDeps are dependencies for NewRouter.
@@ -81,14 +81,18 @@ func markOrCost(marks map[string]float64, p models.Position) float64 {
 	return p.AvgCost
 }
 
-func (h *API) triggerEOD(c *gin.Context, tradeDate string) {
+func (h *API) triggerEOD(c *gin.Context, tradeDate string, force bool) {
 	if h.Runner == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "eod runner not configured"})
 		return
 	}
-	runID, err := h.Runner.RunEOD(c.Request.Context(), tradeDate)
+	runID, err := h.Runner.RunEOD(c.Request.Context(), tradeDate, force)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		resp := gin.H{"error": err.Error()}
+		if runID != 0 {
+			resp["run_id"] = runID
+		}
+		c.JSON(http.StatusInternalServerError, resp)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"run_id": runID})

@@ -6,6 +6,7 @@ import (
 
 	"github.com/cyh/stock-agents/services/api/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -18,36 +19,11 @@ var (
 type Service struct{ DB *gorm.DB }
 
 func (s *Service) ApplyFill(ctx context.Context, req FillRequest) (models.Order, error) {
-	notional := req.Qty * req.FillPrice
 	var order models.Order
-
 	err := s.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		switch req.Side {
-		case "buy":
-			if err := s.applyBuy(tx, req, notional); err != nil {
-				return err
-			}
-		case "sell":
-			if err := s.applySell(tx, req, notional); err != nil {
-				return err
-			}
-		default:
-			return ErrInvalidSide
-		}
-
-		order = models.Order{
-			AccountID:  req.AccountID,
-			RunID:      req.RunID,
-			ApprovalID: req.ApprovalID,
-			Symbol:     req.Symbol,
-			Side:       req.Side,
-			Qty:        req.Qty,
-			FillPrice:  req.FillPrice,
-			Notional:   notional,
-			Status:     "filled",
-			TradeDate:  req.TradeDate,
-		}
-		return tx.Create(&order).Error
+		var err error
+		order, err = ApplyFillTx(tx, req)
+		return err
 	})
 	if err != nil {
 		return models.Order{}, err
@@ -55,9 +31,44 @@ func (s *Service) ApplyFill(ctx context.Context, req FillRequest) (models.Order,
 	return order, nil
 }
 
-func (s *Service) applyBuy(tx *gorm.DB, req FillRequest, notional float64) error {
+// ApplyFillTx applies a fill inside an existing transaction (caller owns commit/rollback).
+// Locks the account (and existing position) with SELECT FOR UPDATE to prevent concurrent overspend.
+func ApplyFillTx(tx *gorm.DB, req FillRequest) (models.Order, error) {
+	notional := req.Qty * req.FillPrice
+	switch req.Side {
+	case "buy":
+		if err := applyBuy(tx, req, notional); err != nil {
+			return models.Order{}, err
+		}
+	case "sell":
+		if err := applySell(tx, req, notional); err != nil {
+			return models.Order{}, err
+		}
+	default:
+		return models.Order{}, ErrInvalidSide
+	}
+
+	order := models.Order{
+		AccountID:  req.AccountID,
+		RunID:      req.RunID,
+		ApprovalID: req.ApprovalID,
+		Symbol:     req.Symbol,
+		Side:       req.Side,
+		Qty:        req.Qty,
+		FillPrice:  req.FillPrice,
+		Notional:   notional,
+		Status:     "filled",
+		TradeDate:  req.TradeDate,
+	}
+	if err := tx.Create(&order).Error; err != nil {
+		return models.Order{}, err
+	}
+	return order, nil
+}
+
+func applyBuy(tx *gorm.DB, req FillRequest, notional float64) error {
 	var account models.Account
-	if err := tx.First(&account, req.AccountID).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&account, req.AccountID).Error; err != nil {
 		return err
 	}
 	if account.Cash < notional {
@@ -69,7 +80,8 @@ func (s *Service) applyBuy(tx *gorm.DB, req FillRequest, notional float64) error
 	}
 
 	var pos models.Position
-	err := tx.Where("account_id = ? AND symbol = ?", req.AccountID, req.Symbol).First(&pos).Error
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("account_id = ? AND symbol = ?", req.AccountID, req.Symbol).First(&pos).Error
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		pos = models.Position{
@@ -97,9 +109,10 @@ func (s *Service) applyBuy(tx *gorm.DB, req FillRequest, notional float64) error
 	}
 }
 
-func (s *Service) applySell(tx *gorm.DB, req FillRequest, notional float64) error {
+func applySell(tx *gorm.DB, req FillRequest, notional float64) error {
 	var pos models.Position
-	err := tx.Where("account_id = ? AND symbol = ?", req.AccountID, req.Symbol).First(&pos).Error
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("account_id = ? AND symbol = ?", req.AccountID, req.Symbol).First(&pos).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ErrInsufficientQty
 	}
@@ -111,7 +124,7 @@ func (s *Service) applySell(tx *gorm.DB, req FillRequest, notional float64) erro
 	}
 
 	var account models.Account
-	if err := tx.First(&account, req.AccountID).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&account, req.AccountID).Error; err != nil {
 		return err
 	}
 	account.Cash += notional

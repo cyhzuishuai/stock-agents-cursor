@@ -10,6 +10,7 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/models"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -18,9 +19,9 @@ const (
 )
 
 var (
-	ErrApprovalNotFound  = errors.New("approval not found")
+	ErrApprovalNotFound   = errors.New("approval not found")
 	ErrApprovalNotPending = errors.New("approval not pending")
-	ErrInvalidDecision   = errors.New("invalid decision")
+	ErrInvalidDecision    = errors.New("invalid decision")
 	ErrRunNotFound        = errors.New("run not found")
 	ErrRunNotCancellable  = errors.New("run not cancellable")
 	ErrMissingFillPrice   = errors.New("missing fill price")
@@ -51,79 +52,89 @@ func (s *Service) Decide(ctx context.Context, approvalID uint, decision, note st
 		return ErrInvalidDecision
 	}
 
-	var approval models.Approval
-	if err := s.DB.WithContext(ctx).First(&approval, approvalID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrApprovalNotFound
-		}
-		return err
-	}
-	if approval.Status != workflow.ApprovalPending {
-		return ErrApprovalNotPending
-	}
-
-	var proposal models.TradeProposal
-	if err := s.DB.WithContext(ctx).First(&proposal, approval.ProposalID).Error; err != nil {
-		return fmt.Errorf("load proposal: %w", err)
-	}
-	if proposal.Status != workflow.ProposalAwaitingApproval {
-		return ErrApprovalNotPending
-	}
-
 	var run models.WorkflowRun
-	if err := s.DB.WithContext(ctx).First(&run, proposal.RunID).Error; err != nil {
-		return fmt.Errorf("load run: %w", err)
-	}
+	err := s.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var approval models.Approval
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&approval, approvalID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrApprovalNotFound
+			}
+			return err
+		}
+		if approval.Status != workflow.ApprovalPending {
+			return ErrApprovalNotPending
+		}
 
-	marks, err := s.loadMarks(ctx, run.ID)
+		var proposal models.TradeProposal
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&proposal, approval.ProposalID).Error; err != nil {
+			return fmt.Errorf("load proposal: %w", err)
+		}
+		if proposal.Status != workflow.ProposalAwaitingApproval {
+			return ErrApprovalNotPending
+		}
+
+		if err := tx.First(&run, proposal.RunID).Error; err != nil {
+			return fmt.Errorf("load run: %w", err)
+		}
+
+		decidedBy := userID
+		approvalUpdates := map[string]any{
+			"status":     workflow.ApprovalRejected,
+			"note":       note,
+			"decided_by": decidedBy,
+		}
+		proposalStatus := workflow.ProposalRejected
+
+		if decision == DecisionApproved {
+			marks, err := loadMarksTx(tx, run.ID)
+			if err != nil {
+				return err
+			}
+			account, err := loadAccountTx(tx)
+			if err != nil {
+				return err
+			}
+			fillPrice, err := fillPriceForProposal(proposal, marks)
+			if err != nil {
+				return err
+			}
+			runID := run.ID
+			approvalIDCopy := approval.ID
+			if _, err := ledger.ApplyFillTx(tx, ledger.FillRequest{
+				AccountID:  account.ID,
+				RunID:      &runID,
+				ApprovalID: &approvalIDCopy,
+				Symbol:     proposal.Symbol,
+				Side:       proposal.Side,
+				Qty:        proposal.Qty,
+				FillPrice:  fillPrice,
+				TradeDate:  run.TradeDate,
+				StopLoss:   proposal.StopLoss,
+				TakeProfit: proposal.TakeProfit,
+			}); err != nil {
+				return fmt.Errorf("apply fill: %w", err)
+			}
+			approvalUpdates["status"] = workflow.ApprovalApproved
+			proposalStatus = workflow.ProposalFilled
+		}
+
+		if err := tx.Model(&approval).Updates(approvalUpdates).Error; err != nil {
+			return fmt.Errorf("update approval: %w", err)
+		}
+		if err := tx.Model(&proposal).Update("status", proposalStatus).Error; err != nil {
+			return fmt.Errorf("update proposal: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
 
-	decidedBy := userID
-	approvalUpdates := map[string]any{
-		"status":     workflow.ApprovalRejected,
-		"note":       note,
-		"decided_by": decidedBy,
-	}
-	proposalStatus := workflow.ProposalRejected
-
-	if decision == DecisionApproved {
-		account, err := s.loadAccount(ctx)
-		if err != nil {
-			return err
-		}
-		fillPrice, err := fillPriceForProposal(proposal, marks)
-		if err != nil {
-			return err
-		}
-		runID := run.ID
-		approvalIDCopy := approval.ID
-		if _, err := s.Ledger.ApplyFill(ctx, ledger.FillRequest{
-			AccountID:  account.ID,
-			RunID:      &runID,
-			ApprovalID: &approvalIDCopy,
-			Symbol:     proposal.Symbol,
-			Side:       proposal.Side,
-			Qty:        proposal.Qty,
-			FillPrice:  fillPrice,
-			TradeDate:  run.TradeDate,
-			StopLoss:   proposal.StopLoss,
-			TakeProfit: proposal.TakeProfit,
-		}); err != nil {
-			return fmt.Errorf("apply fill: %w", err)
-		}
-		approvalUpdates["status"] = workflow.ApprovalApproved
-		proposalStatus = workflow.ProposalFilled
-	}
-
-	if err := s.DB.WithContext(ctx).Model(&approval).Updates(approvalUpdates).Error; err != nil {
-		return fmt.Errorf("update approval: %w", err)
-	}
-	if err := s.DB.WithContext(ctx).Model(&proposal).Update("status", proposalStatus).Error; err != nil {
-		return fmt.Errorf("update proposal: %w", err)
-	}
 	if err := s.refreshRunStatus(ctx, run.ID); err != nil {
+		return err
+	}
+	marks, err := s.loadMarks(ctx, run.ID)
+	if err != nil {
 		return err
 	}
 	if _, err := s.Ledger.UpsertNAV(ctx, run.TradeDate, marks); err != nil {
@@ -144,7 +155,7 @@ func (s *Service) CancelRun(ctx context.Context, runID uint) error {
 		return ErrRunNotCancellable
 	}
 
-	marks, err := s.loadMarks(ctx, run.ID)
+	marks, err := s.loadMarks(ctx, runID)
 	if err != nil {
 		return err
 	}
@@ -202,10 +213,12 @@ func (s *Service) refreshRunStatus(ctx context.Context, runID uint) error {
 }
 
 func (s *Service) loadMarks(ctx context.Context, runID uint) (map[string]float64, error) {
+	return loadMarksTx(s.DB.WithContext(ctx), runID)
+}
+
+func loadMarksTx(tx *gorm.DB, runID uint) (map[string]float64, error) {
 	var step models.WorkflowStepResult
-	if err := s.DB.WithContext(ctx).
-		Where("run_id = ? AND step = ?", runID, workflow.StepData).
-		First(&step).Error; err != nil {
+	if err := tx.Where("run_id = ? AND step = ?", runID, workflow.StepData).First(&step).Error; err != nil {
 		return nil, fmt.Errorf("load data step: %w", err)
 	}
 	var data dataResult
@@ -235,9 +248,9 @@ func fillPriceForProposal(proposal models.TradeProposal, marks map[string]float6
 	return 0, fmt.Errorf("%w: %s", ErrMissingFillPrice, proposal.Symbol)
 }
 
-func (s *Service) loadAccount(ctx context.Context) (models.Account, error) {
+func loadAccountTx(tx *gorm.DB) (models.Account, error) {
 	var account models.Account
-	if err := s.DB.WithContext(ctx).First(&account).Error; err != nil {
+	if err := tx.First(&account).Error; err != nil {
 		return models.Account{}, fmt.Errorf("load account: %w", err)
 	}
 	return account, nil
