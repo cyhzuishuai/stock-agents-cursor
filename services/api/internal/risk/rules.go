@@ -34,7 +34,3 @@ func LoadEngineFromMap(m map[string]float64) Engine {
 	}
 	return e
 }
-
-func (e Engine) Evaluate(_ PortfolioState, _ Proposal) Decision {
-	return Decision{AutoExecute: true}
-}
