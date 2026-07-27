@@ -14,10 +14,17 @@ import (
 	"gorm.io/gorm"
 )
 
+// LedgerAPI is the ledger surface used by the EOD runner.
+type LedgerAPI interface {
+	AccountSnapshot(ctx context.Context, accountID uint) (ledger.AccountSnapshot, error)
+	ApplyFill(ctx context.Context, req ledger.FillRequest) (models.Order, error)
+	UpsertNAV(ctx context.Context, tradeDate string, marks map[string]float64) (models.NavSnapshot, error)
+}
+
 type Runner struct {
 	DB     *gorm.DB
 	Agents *agentsclient.Client
-	Ledger *ledger.Service
+	Ledger LedgerAPI
 	Risk   risk.Engine
 	Redis  redis.Cmdable
 }
@@ -69,35 +76,53 @@ func (r *Runner) RunEOD(ctx context.Context, tradeDate string) (runID uint, err 
 		return 0, fmt.Errorf("create workflow run: %w", err)
 	}
 
-	if err := r.runEOD(ctx, &run); err != nil {
-		_ = r.failRun(ctx, &run, err)
-		return run.ID, err
-	}
-	return run.ID, nil
+	return run.ID, r.runEOD(ctx, &run)
 }
 
 func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun) error {
+	marks, preserveStatus, err := r.runEODThroughFills(ctx, run)
+	if err != nil {
+		// failRun only for pre-fill failures. After ledger fills or terminal
+		// executed/awaiting_approval, preserve that status.
+		if !preserveStatus && !isPostFillStatus(run.Status) {
+			_ = r.failRun(ctx, run, err)
+		}
+		return err
+	}
+
+	if _, err := r.Ledger.UpsertNAV(ctx, run.TradeDate, marks); err != nil {
+		// Status already executed/awaiting_approval — do not overwrite to failed.
+		return fmt.Errorf("upsert nav: %w", err)
+	}
+	return nil
+}
+
+func isPostFillStatus(status string) bool {
+	return status == StatusExecuted || status == StatusAwaitingApproval
+}
+
+func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun) (map[string]float64, bool, error) {
 	account, err := r.loadAccount(ctx)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	watchlist, err := r.loadWatchlist(ctx)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	snap, err := r.Ledger.AccountSnapshot(ctx, account.ID)
 	if err != nil {
-		return fmt.Errorf("account snapshot: %w", err)
+		return nil, false, fmt.Errorf("account snapshot: %w", err)
 	}
 
 	prior := map[string]any{}
 	for _, step := range AgentChain() {
 		if err := r.setRunStatus(ctx, run, step.Name); err != nil {
-			return err
+			return nil, false, err
 		}
 		baseURL, err := r.agentURL(step.Name)
 		if err != nil {
-			return err
+			return nil, false, err
 		}
 		body := agentRunRequest{
 			RunID:            strconv.FormatUint(uint64(run.ID), 10),
@@ -109,38 +134,38 @@ func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun) error {
 		raw, err := r.Agents.Call(ctx, baseURL, body, step.Timeout)
 		if err != nil {
 			_ = r.persistStep(ctx, run.ID, step.Name, StepStatusFailed, fmt.Sprintf(`{"error":%q}`, err.Error()))
-			return fmt.Errorf("agent %s: %w", step.Name, err)
+			return nil, false, fmt.Errorf("agent %s: %w", step.Name, err)
 		}
 		if err := r.persistStep(ctx, run.ID, step.Name, StepStatusOK, string(raw)); err != nil {
-			return err
+			return nil, false, err
 		}
 		var decoded any
 		if err := json.Unmarshal(raw, &decoded); err != nil {
-			return fmt.Errorf("decode %s payload: %w", step.Name, err)
+			return nil, false, fmt.Errorf("decode %s payload: %w", step.Name, err)
 		}
 		prior[step.Name] = decoded
 	}
 
 	dataRaw, err := json.Marshal(prior[StepData])
 	if err != nil {
-		return fmt.Errorf("marshal data result: %w", err)
+		return nil, false, fmt.Errorf("marshal data result: %w", err)
 	}
 	var data dataResult
 	if err := json.Unmarshal(dataRaw, &data); err != nil {
-		return fmt.Errorf("parse data bars: %w", err)
+		return nil, false, fmt.Errorf("parse data bars: %w", err)
 	}
 	marks := marksFromBars(data.Bars)
 	if len(marks) == 0 {
-		return fmt.Errorf("no marks from data bars")
+		return nil, false, fmt.Errorf("no marks from data bars")
 	}
 
 	portRaw, err := json.Marshal(prior[StepPortfolio])
 	if err != nil {
-		return fmt.Errorf("marshal portfolio result: %w", err)
+		return nil, false, fmt.Errorf("marshal portfolio result: %w", err)
 	}
 	var port portfolioResult
 	if err := json.Unmarshal(portRaw, &port); err != nil {
-		return fmt.Errorf("parse portfolio proposals: %w", err)
+		return nil, false, fmt.Errorf("parse portfolio proposals: %w", err)
 	}
 
 	proposals := make([]models.TradeProposal, 0, len(port.Proposals))
@@ -160,28 +185,31 @@ func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun) error {
 	}
 	if len(proposals) > 0 {
 		if err := r.DB.WithContext(ctx).Create(&proposals).Error; err != nil {
-			return fmt.Errorf("insert proposals: %w", err)
+			return nil, false, fmt.Errorf("insert proposals: %w", err)
 		}
 	}
 
 	state, err := r.portfolioState(ctx, account.ID, marks)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 
 	pendingApprovals := false
+	anyFill := false
 	for i := range proposals {
 		p := &proposals[i]
 		fillPrice, ok := marks[p.Symbol]
 		if !ok || fillPrice <= 0 {
-			return fmt.Errorf("missing close for symbol %s", p.Symbol)
+			return nil, anyFill, fmt.Errorf("missing close for symbol %s", p.Symbol)
 		}
+		// Gate math must use qty×close, not agent-estimated notional/cash impact.
+		notional, cashImpact := fillNotionalAndCashImpact(p.Side, p.Qty, fillPrice)
 		decision := r.Risk.Evaluate(state, risk.Proposal{
 			Symbol:              p.Symbol,
 			Side:                p.Side,
 			Qty:                 p.Qty,
-			EstimatedNotional:   p.EstimatedNotional,
-			EstimatedCashImpact: p.EstimatedCashImpact,
+			EstimatedNotional:   notional,
+			EstimatedCashImpact: cashImpact,
 			FillPrice:           fillPrice,
 		})
 		if decision.AutoExecute {
@@ -197,23 +225,24 @@ func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun) error {
 				StopLoss:   p.StopLoss,
 				TakeProfit: p.TakeProfit,
 			}); err != nil {
-				return fmt.Errorf("apply fill %s: %w", p.Symbol, err)
+				return nil, anyFill, fmt.Errorf("apply fill %s: %w", p.Symbol, err)
 			}
+			anyFill = true
 			p.Status = ProposalFilled
 			if err := r.DB.WithContext(ctx).Model(p).Update("status", ProposalFilled).Error; err != nil {
-				return err
+				return nil, true, err
 			}
 			// Refresh state for subsequent proposals in the same run.
 			state, err = r.portfolioState(ctx, account.ID, marks)
 			if err != nil {
-				return err
+				return nil, true, err
 			}
 			continue
 		}
 
 		reasons, err := json.Marshal(decision.BreachReasons)
 		if err != nil {
-			return err
+			return nil, anyFill, err
 		}
 		approval := models.Approval{
 			ProposalID:        p.ID,
@@ -221,11 +250,11 @@ func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun) error {
 			BreachReasonsJSON: string(reasons),
 		}
 		if err := r.DB.WithContext(ctx).Create(&approval).Error; err != nil {
-			return fmt.Errorf("create approval: %w", err)
+			return nil, anyFill, fmt.Errorf("create approval: %w", err)
 		}
 		p.Status = ProposalAwaitingApproval
 		if err := r.DB.WithContext(ctx).Model(p).Update("status", ProposalAwaitingApproval).Error; err != nil {
-			return err
+			return nil, anyFill, err
 		}
 		pendingApprovals = true
 	}
@@ -235,13 +264,23 @@ func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun) error {
 		finalStatus = StatusAwaitingApproval
 	}
 	if err := r.setRunStatus(ctx, run, finalStatus); err != nil {
-		return err
+		return nil, anyFill, err
 	}
+	return marks, true, nil
+}
 
-	if _, err := r.Ledger.UpsertNAV(ctx, run.TradeDate, marks); err != nil {
-		return fmt.Errorf("upsert nav: %w", err)
+// fillNotionalAndCashImpact recomputes gate inputs from qty × fill price (EOD close).
+func fillNotionalAndCashImpact(side string, qty, fillPrice float64) (notional, cashImpact float64) {
+	notional = qty * fillPrice
+	switch side {
+	case "buy":
+		cashImpact = -notional
+	case "sell":
+		cashImpact = notional
+	default:
+		cashImpact = 0
 	}
-	return nil
+	return notional, cashImpact
 }
 
 func (r *Runner) agentURL(step string) (string, error) {

@@ -3,6 +3,7 @@ package workflow_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -231,6 +232,110 @@ func TestRunEODBreachCreatesPendingApprovalNoFill(t *testing.T) {
 	if nav.Cash != 100000 || nav.Equity != 0 || nav.Nav != 100000 {
 		t.Fatalf("nav: %+v", nav)
 	}
+}
+
+func TestRunEODUnderstatedNotionalStillBreachesMaxOrder(t *testing.T) {
+	// Agent understates notional (100) but qty*close = 100*191 = 19100 > max 10000.
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioBuyJSON(100, 100, -100),
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"auto"}],"warnings":[]}`,
+	})
+
+	runID, err := env.runner.RunEOD(context.Background(), tradeDate)
+	if err != nil {
+		t.Fatalf("RunEOD: %v", err)
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusAwaitingApproval {
+		t.Fatalf("run status: got %q want awaiting_approval", run.Status)
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 1 || proposals[0].Status != workflow.ProposalAwaitingApproval {
+		t.Fatalf("proposal: %+v", proposals)
+	}
+
+	var approvals []models.Approval
+	if err := env.db.Find(&approvals).Error; err != nil {
+		t.Fatalf("approvals: %v", err)
+	}
+	if len(approvals) != 1 {
+		t.Fatalf("approvals: got %d want 1", len(approvals))
+	}
+	var reasons []string
+	if err := json.Unmarshal([]byte(approvals[0].BreachReasonsJSON), &reasons); err != nil {
+		t.Fatalf("breach reasons json: %v", err)
+	}
+	found := false
+	for _, r := range reasons {
+		if r == "max_order_notional" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected max_order_notional breach, got %v", reasons)
+	}
+
+	var orders int64
+	if err := env.db.Model(&models.Order{}).Count(&orders).Error; err != nil {
+		t.Fatalf("orders: %v", err)
+	}
+	if orders != 0 {
+		t.Fatalf("orders: got %d want 0", orders)
+	}
+}
+
+func TestRunEODNAVFailurePreservesExecutedStatus(t *testing.T) {
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioBuyJSON(10, 1910, -1910),
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{"liquidity":0.9},"suggested_action":"auto"}],"warnings":[]}`,
+	})
+	inner := env.runner.Ledger.(*ledger.Service)
+	env.runner.Ledger = &failingNAVLedger{Service: inner, err: errors.New("nav boom")}
+
+	runID, err := env.runner.RunEOD(context.Background(), tradeDate)
+	if err == nil {
+		t.Fatal("expected UpsertNAV error")
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusExecuted {
+		t.Fatalf("run status: got %q want executed (must not flip to failed)", run.Status)
+	}
+
+	var orders int64
+	if err := env.db.Model(&models.Order{}).Count(&orders).Error; err != nil {
+		t.Fatalf("orders: %v", err)
+	}
+	if orders != 1 {
+		t.Fatalf("orders: got %d want 1 (fill must stick)", orders)
+	}
+}
+
+type failingNAVLedger struct {
+	*ledger.Service
+	err error
+}
+
+func (f *failingNAVLedger) UpsertNAV(ctx context.Context, tradeDate string, marks map[string]float64) (models.NavSnapshot, error) {
+	return models.NavSnapshot{}, f.err
 }
 
 type stubResponses struct {
