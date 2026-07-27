@@ -2,6 +2,8 @@
 
 美股 **策略驱动** 纸面交易多智能体系统：激活策略决定开盘前 / 盘中调度节奏与风控执行模式；Go API 编排与 Alpaca Paper 网关；Python Agent 分析/决策；Next.js 总览、Runs 与审批。
 
+产品说明：`docs/product-overview.md`  
+产品 PRD：`docs/prd.md`  
 设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`（V1 基线；**调度节奏已由策略规格取代**）  
 策略调度：`docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`  
 Alpaca Paper 权威：`docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`  
