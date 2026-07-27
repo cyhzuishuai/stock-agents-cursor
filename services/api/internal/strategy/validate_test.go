@@ -41,6 +41,14 @@ func TestValidateStrategyFieldsInvalidExecutionMode(t *testing.T) {
 	}
 }
 
+func TestValidateBypassRiskOK(t *testing.T) {
+	s := validStrategy()
+	s.ExecutionMode = ExecutionModeBypassRisk
+	if err := ValidateStrategyFields(s); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateStrategyFieldsNegativePreOpen(t *testing.T) {
 	s := validStrategy()
 	s.PreOpenMinutes = -1

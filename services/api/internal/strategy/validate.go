@@ -10,6 +10,7 @@ import (
 const (
 	ExecutionModeAutoReject      = "auto_reject_breaches"
 	ExecutionModeRequireApproval = "require_approval"
+	ExecutionModeBypassRisk      = "bypass_risk"
 )
 
 func ValidateStrategyFields(s models.Strategy) error {
@@ -18,7 +19,7 @@ func ValidateStrategyFields(s models.Strategy) error {
 	}
 
 	switch s.ExecutionMode {
-	case ExecutionModeAutoReject, ExecutionModeRequireApproval:
+	case ExecutionModeAutoReject, ExecutionModeRequireApproval, ExecutionModeBypassRisk:
 	default:
 		return fmt.Errorf("invalid execution_mode %q", s.ExecutionMode)
 	}

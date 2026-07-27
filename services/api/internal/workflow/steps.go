@@ -18,6 +18,7 @@ const (
 
 	ProposalPendingAuto      = "pending_auto"
 	ProposalAwaitingApproval = "awaiting_approval"
+	ProposalSubmitted        = "submitted"
 	ProposalFilled           = "filled"
 	ProposalRejected         = "rejected"
 	ProposalCancelled        = "cancelled"
@@ -37,6 +38,7 @@ const (
 
 	ExecutionModeAutoReject      = "auto_reject_breaches"
 	ExecutionModeRequireApproval = "require_approval"
+	ExecutionModeBypassRisk      = "bypass_risk"
 
 	DefaultLockTTL   = 30 * time.Minute
 	DataAgentTimeout = 60 * time.Second
