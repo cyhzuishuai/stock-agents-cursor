@@ -153,6 +153,38 @@ func TestDeleteActiveForbidden(t *testing.T) {
 	}
 }
 
+func TestCreateInvalidExecutionModeValidationError(t *testing.T) {
+	svc, _ := setupService(t)
+	ctx := context.Background()
+
+	in := validCreateInput("Invalid Mode Strategy")
+	in.ExecutionMode = "invalid"
+	_, err := svc.Create(ctx, in)
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("Create invalid mode: got %v want ErrValidation", err)
+	}
+}
+
+func TestGetUnknownIDNotFound(t *testing.T) {
+	svc, _ := setupService(t)
+	ctx := context.Background()
+
+	_, err := svc.Get(ctx, 99999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get unknown id: got %v want ErrNotFound", err)
+	}
+}
+
+func TestActivateUnknownIDNotFound(t *testing.T) {
+	svc, _ := setupService(t)
+	ctx := context.Background()
+
+	_, err := svc.Activate(ctx, 99999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Activate unknown id: got %v want ErrNotFound", err)
+	}
+}
+
 func TestUpdateInvalidModeValidationError(t *testing.T) {
 	svc, _ := setupService(t)
 	ctx := context.Background()
