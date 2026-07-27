@@ -4,9 +4,15 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/cyh/stock-agents/services/api/internal/agentsclient"
+	"github.com/cyh/stock-agents/services/api/internal/approvals"
 	"github.com/cyh/stock-agents/services/api/internal/config"
 	"github.com/cyh/stock-agents/services/api/internal/db"
 	"github.com/cyh/stock-agents/services/api/internal/httpserver"
+	"github.com/cyh/stock-agents/services/api/internal/ledger"
+	"github.com/cyh/stock-agents/services/api/internal/risk"
+	"github.com/cyh/stock-agents/services/api/internal/workflow"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -37,7 +43,44 @@ func main() {
 		os.Exit(1)
 	}
 
-	router := httpserver.NewRouter(gormDB, cfg.JWTSecret)
+	ledgerSvc := &ledger.Service{DB: gormDB}
+	approvalsSvc := &approvals.Service{DB: gormDB, Ledger: ledgerSvc}
+
+	var eodRunner httpserver.EODRunner
+	if cfg.RedisURL != "" {
+		opt, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "redis url: %v\n", err)
+			os.Exit(1)
+		}
+		rdb := redis.NewClient(opt)
+		eodRunner = &workflow.Runner{
+			DB: gormDB,
+			Agents: &agentsclient.Client{
+				DataURL:      cfg.AgentDataURL,
+				ResearchURL:  cfg.AgentResearchURL,
+				DecisionURL:  cfg.AgentDecisionURL,
+				PortfolioURL: cfg.AgentPortfolioURL,
+				RiskURL:      cfg.AgentRiskURL,
+			},
+			Ledger: ledgerSvc,
+			Risk: risk.LoadEngineFromMap(map[string]float64{
+				"max_order_notional":     cfg.RiskMaxOrderNotional,
+				"max_single_name_weight": cfg.RiskMaxSingleNameWeight,
+				"min_cash_ratio":         cfg.RiskMinCashRatio,
+			}),
+			Redis: rdb,
+		}
+	}
+
+	router := httpserver.NewRouter(httpserver.RouterDeps{
+		DB:        gormDB,
+		JWTSecret: cfg.JWTSecret,
+		Runner:    eodRunner,
+		Approvals: approvalsSvc,
+		Ledger:    ledgerSvc,
+		Config:    cfg,
+	})
 
 	addr := os.Getenv("API_ADDR")
 	if addr == "" {

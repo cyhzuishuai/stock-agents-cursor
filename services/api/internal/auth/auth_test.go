@@ -84,7 +84,7 @@ func TestLoginSuccessAndFail(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB, userID := setupSeededDB(t)
 	secret := "test-jwt-secret"
-	router := httpserver.NewRouter(gormDB, secret)
+	router := httpserver.NewRouter(httpserver.RouterDeps{DB: gormDB, JWTSecret: secret})
 
 	t.Run("success", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
@@ -149,7 +149,7 @@ func TestMeRequiresBearerAndReturnsUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB, userID := setupSeededDB(t)
 	secret := "test-jwt-secret"
-	router := httpserver.NewRouter(gormDB, secret)
+	router := httpserver.NewRouter(httpserver.RouterDeps{DB: gormDB, JWTSecret: secret})
 
 	t.Run("unauthorized without token", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)

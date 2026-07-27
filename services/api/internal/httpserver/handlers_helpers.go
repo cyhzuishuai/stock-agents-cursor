@@ -1,0 +1,95 @@
+package httpserver
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+
+	"github.com/cyh/stock-agents/services/api/internal/approvals"
+	"github.com/cyh/stock-agents/services/api/internal/config"
+	"github.com/cyh/stock-agents/services/api/internal/ledger"
+	"github.com/cyh/stock-agents/services/api/internal/models"
+	"github.com/cyh/stock-agents/services/api/internal/workflow"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+// EODRunner triggers an end-of-day workflow run.
+type EODRunner interface {
+	RunEOD(ctx context.Context, tradeDate string) (uint, error)
+}
+
+// RouterDeps are dependencies for NewRouter.
+type RouterDeps struct {
+	DB        *gorm.DB
+	JWTSecret string
+	Runner    EODRunner
+	Approvals *approvals.Service
+	Ledger    *ledger.Service
+	Config    *config.Config
+}
+
+// API holds shared handler dependencies.
+type API struct {
+	DB        *gorm.DB
+	JWTSecret string
+	Runner    EODRunner
+	Approvals *approvals.Service
+	Ledger    *ledger.Service
+	Config    *config.Config
+}
+
+func (h *API) loadAccount(c *gin.Context) (models.Account, error) {
+	var account models.Account
+	err := h.DB.WithContext(c.Request.Context()).First(&account).Error
+	return account, err
+}
+
+func (h *API) latestMarks(ctx context.Context) map[string]float64 {
+	marks := map[string]float64{}
+	var run models.WorkflowRun
+	if err := h.DB.WithContext(ctx).Order("id DESC").First(&run).Error; err != nil {
+		return marks
+	}
+	var step models.WorkflowStepResult
+	if err := h.DB.WithContext(ctx).
+		Where("run_id = ? AND step = ?", run.ID, workflow.StepData).
+		First(&step).Error; err != nil {
+		return marks
+	}
+	var data struct {
+		Bars []struct {
+			Symbol string  `json:"symbol"`
+			Close  float64 `json:"close"`
+		} `json:"bars"`
+	}
+	if err := json.Unmarshal([]byte(step.PayloadJSON), &data); err != nil {
+		return marks
+	}
+	for _, b := range data.Bars {
+		if b.Symbol != "" {
+			marks[b.Symbol] = b.Close
+		}
+	}
+	return marks
+}
+
+func markOrCost(marks map[string]float64, p models.Position) float64 {
+	if m, ok := marks[p.Symbol]; ok && m > 0 {
+		return m
+	}
+	return p.AvgCost
+}
+
+func (h *API) triggerEOD(c *gin.Context, tradeDate string) {
+	if h.Runner == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "eod runner not configured"})
+		return
+	}
+	runID, err := h.Runner.RunEOD(c.Request.Context(), tradeDate)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"run_id": runID})
+}
