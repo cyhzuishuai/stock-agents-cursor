@@ -24,6 +24,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="app-shell">
       <header className="app-shell__header">
+        <span className="app-shell__signature" aria-hidden="true" />
         <p className="app-shell__brand">Stock Agents</p>
         <nav className="app-shell__nav" aria-label="Main">
           {NAV_ITEMS.map(({ href, label }) => (
