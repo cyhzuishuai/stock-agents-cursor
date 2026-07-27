@@ -14,12 +14,18 @@ const (
 	StatusFailed            = "failed"
 	StatusAwaitingApproval  = "awaiting_approval"
 	StatusExecuted          = "executed"
+	StatusCancelled         = "cancelled"
 
 	ProposalPendingAuto      = "pending_auto"
 	ProposalAwaitingApproval = "awaiting_approval"
 	ProposalFilled           = "filled"
+	ProposalRejected         = "rejected"
+	ProposalCancelled        = "cancelled"
 
-	ApprovalPending = "pending"
+	ApprovalPending   = "pending"
+	ApprovalApproved  = "approved"
+	ApprovalRejected  = "rejected"
+	ApprovalCancelled = "cancelled"
 
 	StepStatusOK     = "ok"
 	StepStatusFailed = "failed"
