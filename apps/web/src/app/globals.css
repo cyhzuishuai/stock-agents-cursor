@@ -40,3 +40,41 @@ a {
     color-scheme: dark;
   }
 }
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell__header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+
+.app-shell__brand {
+  font-weight: 600;
+}
+
+.app-shell__nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.app-shell__link {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+.app-shell__link--active {
+  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+
+.app-shell__main {
+  flex: 1;
+  padding: 1.5rem;
+}
