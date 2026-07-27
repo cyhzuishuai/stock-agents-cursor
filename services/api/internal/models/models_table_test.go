@@ -25,6 +25,7 @@ func TestAutoMigrateAllModels(t *testing.T) {
 		&Approval{},
 		&RiskRuleConfig{},
 		&NavSnapshot{},
+		&Strategy{},
 	)
 	if err != nil {
 		t.Fatalf("AutoMigrate: %v", err)

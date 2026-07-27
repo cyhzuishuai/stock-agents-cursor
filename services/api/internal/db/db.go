@@ -30,5 +30,6 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.Approval{},
 		&models.RiskRuleConfig{},
 		&models.NavSnapshot{},
+		&models.Strategy{},
 	)
 }

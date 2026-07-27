@@ -12,4 +12,5 @@ type TradeProposal struct {
 	EstimatedNotional   float64  `json:"estimated_notional"`
 	EstimatedCashImpact float64  `json:"estimated_cash_impact"`
 	Status              string   `json:"status"` // pending_auto|awaiting_approval|filled|rejected|cancelled
+	BreachReasonsJSON   string   `gorm:"type:text" json:"breach_reasons_json"`
 }

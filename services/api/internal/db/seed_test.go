@@ -72,4 +72,27 @@ func TestSeedCreatesAdminAndAccount(t *testing.T) {
 			t.Fatalf("risk %q: got %v want %v", key, rule.ValueFloat, want)
 		}
 	}
+
+	var strategy models.Strategy
+	if err := gormDB.Where("name = ?", "整体策略1").First(&strategy).Error; err != nil {
+		t.Fatalf("find default strategy: %v", err)
+	}
+	if !strategy.IsSystemDefault {
+		t.Fatalf("strategy is_system_default: got false want true")
+	}
+	if !strategy.IsActive {
+		t.Fatalf("strategy is_active: got false want true")
+	}
+	if strategy.PreOpenMinutes != 10 {
+		t.Fatalf("strategy pre_open_minutes: got %d want 10", strategy.PreOpenMinutes)
+	}
+	if strategy.IntradayEveryMinutes != 60 {
+		t.Fatalf("strategy intraday_every_minutes: got %d want 60", strategy.IntradayEveryMinutes)
+	}
+	if strategy.IntradayStartET != "10:00" || strategy.IntradayEndET != "15:00" {
+		t.Fatalf("strategy intraday window: got %s–%s want 10:00–15:00", strategy.IntradayStartET, strategy.IntradayEndET)
+	}
+	if strategy.ExecutionMode != "auto_reject_breaches" {
+		t.Fatalf("strategy execution_mode: got %q want auto_reject_breaches", strategy.ExecutionMode)
+	}
 }

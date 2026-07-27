@@ -78,6 +78,26 @@ func Seed(db *gorm.DB, cfg *config.Config) error {
 			}
 		}
 
+		var stratCount int64
+		if err := tx.Model(&models.Strategy{}).Count(&stratCount).Error; err != nil {
+			return err
+		}
+		if stratCount == 0 {
+			if err := tx.Create(&models.Strategy{
+				Name:                 "整体策略1",
+				Description:          "System default: pre-open + hourly intraday; auto-executes within risk limits; rejects breaches without human approval.",
+				IsSystemDefault:      true,
+				IsActive:             true,
+				PreOpenMinutes:       10,
+				IntradayEveryMinutes: 60,
+				IntradayStartET:      "10:00",
+				IntradayEndET:        "15:00",
+				ExecutionMode:        "auto_reject_breaches",
+			}).Error; err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
 }
