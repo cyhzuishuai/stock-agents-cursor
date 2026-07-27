@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cyh/stock-agents/services/api/internal/stream"
 	"github.com/gin-gonic/gin"
 )
 
@@ -20,15 +21,15 @@ func SetSSEHeartbeatIntervalForTest(d time.Duration) time.Duration {
 
 // StreamMarket serves GET /api/v1/stream/market as Server-Sent Events.
 func (h *API) StreamMarket(c *gin.Context) {
-	h.serveSSE(c, "quote")
+	h.serveSSE(c, "quote", stream.ChannelMarket)
 }
 
 // StreamAccount serves GET /api/v1/stream/account as Server-Sent Events.
 func (h *API) StreamAccount(c *gin.Context) {
-	h.serveSSE(c, "account")
+	h.serveSSE(c, "account", stream.ChannelAccount)
 }
 
-func (h *API) serveSSE(c *gin.Context, eventName string) {
+func (h *API) serveSSE(c *gin.Context, eventName string, kind stream.ChannelKind) {
 	if h.Stream == nil || !h.Stream.Enabled() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "streaming disabled"})
 		return
@@ -48,7 +49,7 @@ func (h *API) serveSSE(c *gin.Context, eventName string) {
 	flusher.Flush()
 
 	ch := make(chan []byte, 32)
-	unsub := h.Stream.Subscribe(ch)
+	unsub := h.Stream.Subscribe(kind, ch)
 	defer unsub()
 
 	heartbeat := time.NewTicker(sseHeartbeatInterval)

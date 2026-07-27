@@ -117,14 +117,14 @@ Verified against design specs via codebase review and unit tests (`go test ./...
 |------|--------|-------|
 | EOD schedule + manual trigger | Implemented | **DB active strategy is authoritative** (pre-open + intraday ticks via `strategy.BuildJobSpecs`; hot-reload on activate/PATCH). `EOD_CRON` is **legacy only** (unused when a strategy is active; no active strategy → no automatic ticks). Manual: `POST /api/v1/runs/eod` (JWT) and `POST /internal/eod/run` (internal token); web **Run EOD now** on `/runs`. |
 | Five agents / broker boundary | Implemented | `agent-data`, `agent-research`, `agent-decision`, `agent-portfolio`, `agent-risk` in Compose; agents proposal-only; Go submits to Alpaca Paper after risk gate or `bypass_risk`. |
-| Alpaca Paper authority | Implemented (Phase 1) | `AlpacaMarketDataProvider` fetches daily bars; Go `internal/broker` submits market orders; Overview/Portfolio/Orders read Alpaca with short TTL cache; frontend tiered polling. |
+| Alpaca Paper authority | Implemented (Phase 1 + SSE client) | `AlpacaMarketDataProvider` fetches daily bars; Go `internal/broker` submits market orders; Overview/Portfolio/Orders read Alpaca with short TTL cache; frontend tiered polling + optional JWT SSE quote merge. |
 | Portfolio fields | Mostly implemented | Cash/positions from Alpaca; local `stop_loss` / `take_profit` on positions when mirrored; concentration in Go risk engine. |
 | Risk + execution modes | Implemented | `require_approval`, `auto_reject_breaches`, `bypass_risk`; Go `risk.Evaluate` → submit, approval, or reject per mode. |
 | Compose stack | Present | `deploy/docker-compose.yml` + override: web, api, five agents, postgres, redis. |
 
 **Known gaps (honest, not silent TBD):**
 
-- **Alpaca SSE streaming** — Phase 2; `ALPACA_STREAM_ENABLED=false` until stream hub ships. Phase 1 uses tiered REST polling.
+- **Alpaca SSE streaming** — Phase 2 hub + JWT SSE endpoints + web `useMarketStream` are in tree. Default remains `ALPACA_STREAM_ENABLED=false` (REST polling only). To enable: set `ALPACA_STREAM_ENABLED=true` with valid `ALPACA_API_KEY` / `ALPACA_API_SECRET`, restart `api`, then open Overview/Portfolio — quotes merge live when `/api/v1/stream/market` returns `text/event-stream`; on 503 the UI silently keeps tiered polling. Manual smoke: `curl -N -H "Authorization: Bearer $TOKEN" "$API/api/v1/stream/market"` should stream or return `{"error":"streaming disabled"}`.
 - **JWT expiry** — tokens are signed HS256 with `user_id` only; no `exp` claim (acceptable for single-user V1, rotate `JWT_SECRET` to invalidate).
 - **Max drawdown rule** — `max_drawdown` loads into the risk engine config but is **not evaluated** in `risk.Evaluate` (default `0` = disabled); NAV peak / drawdown is not shown in the web UI yet.
 - **Live E2E smoke** — not executed in final gate when Docker daemon unavailable; API integration tests with stubbed broker cover submit and approval paths.

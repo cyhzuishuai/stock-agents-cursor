@@ -133,7 +133,7 @@ func TestStreamAccountFansHubEvents(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
 	}
 
-	go publishUntilDone(ctx, hub, `{"event":"trade_update"}`)
+	go publishAccountUntilDone(ctx, hub, `{"event":"trade_update"}`)
 
 	gotEvent, gotData := readSSEUntil(t, resp.Body, 2*time.Second, func(event, data string) bool {
 		return event == "account" && data == `{"event":"trade_update"}`
@@ -249,6 +249,19 @@ func publishUntilDone(ctx context.Context, hub *stream.Hub, payload string) {
 			// the SSE handler is still subscribing.
 			hub.PublishQuote(fmt.Sprintf("S%d", i), []byte(payload))
 			i++
+		}
+	}
+}
+
+func publishAccountUntilDone(ctx context.Context, hub *stream.Hub, payload string) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			hub.PublishAccount([]byte(payload))
 		}
 	}
 }

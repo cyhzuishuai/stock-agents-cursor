@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { PortfolioPosition, PortfolioResponse } from "@/lib/types";
+import {
+  applyQuoteToPortfolio,
+  useMarketStream,
+  type QuoteUpdate,
+} from "@/lib/useMarketStream";
 import { useTieredPolling } from "@/lib/useTieredPolling";
 
 const currency = new Intl.NumberFormat("en-US", {
@@ -70,7 +75,13 @@ export default function PortfolioPage() {
     };
   }, [loadPortfolio]);
 
+  // REST remains reconciliation; SSE quotes merge when the stream is up.
   useTieredPolling(true, "account", loadPortfolio);
+
+  const onQuote = useCallback((quote: QuoteUpdate) => {
+    setData((prev) => (prev ? applyQuoteToPortfolio(prev, quote) : prev));
+  }, []);
+  useMarketStream(true, onQuote);
 
   if (loading) {
     return <p className="empty-state">Loading portfolio…</p>;

@@ -48,7 +48,7 @@ func TestHubFakePumpThrottlesPerSymbol(t *testing.T) {
 	h.now = func() time.Time { return clock }
 
 	ch := make(chan []byte, 8)
-	unsub := h.Subscribe(ch)
+	unsub := h.Subscribe(ChannelMarket, ch)
 	defer unsub()
 
 	// Fake upstream pump injects rapid quotes.
@@ -91,7 +91,7 @@ func TestHubPublishNoopWhenDisabled(t *testing.T) {
 
 	h := NewHub(false, "key", "secret")
 	ch := make(chan []byte, 2)
-	unsub := h.Subscribe(ch)
+	unsub := h.Subscribe(ChannelMarket, ch)
 	defer unsub()
 
 	h.PublishQuote("AAPL", []byte(`{"p":1}`))
@@ -105,12 +105,36 @@ func TestHubUnsubscribeStopsDelivery(t *testing.T) {
 
 	h := NewHub(true, "key", "secret")
 	ch := make(chan []byte, 2)
-	unsub := h.Subscribe(ch)
+	unsub := h.Subscribe(ChannelMarket, ch)
 	unsub()
 
 	h.PublishQuote("AAPL", []byte(`{"p":1}`))
 	if got := drain(ch); len(got) != 0 {
 		t.Fatalf("unsubscribed channel should not receive, got %v", got)
+	}
+}
+
+func TestHubMarketAndAccountChannelsIsolated(t *testing.T) {
+	t.Parallel()
+
+	h := NewHub(true, "key", "secret")
+	market := make(chan []byte, 2)
+	account := make(chan []byte, 2)
+	unsubM := h.Subscribe(ChannelMarket, market)
+	unsubA := h.Subscribe(ChannelAccount, account)
+	defer unsubM()
+	defer unsubA()
+
+	h.PublishQuote("AAPL", []byte(`{"symbol":"AAPL","p":1}`))
+	h.PublishAccount([]byte(`{"event":"trade_update"}`))
+
+	gotM := drain(market)
+	gotA := drain(account)
+	if len(gotM) != 1 || string(gotM[0]) != `{"symbol":"AAPL","p":1}` {
+		t.Fatalf("market got %v", gotM)
+	}
+	if len(gotA) != 1 || string(gotA[0]) != `{"event":"trade_update"}` {
+		t.Fatalf("account got %v", gotA)
 	}
 }
 

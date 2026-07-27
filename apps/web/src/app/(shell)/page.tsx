@@ -4,6 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { OverviewDashboard } from "@/components/OverviewDashboard";
 import { api } from "@/lib/api";
 import type { OverviewResponse } from "@/lib/types";
+import {
+  applyQuoteToOverview,
+  useMarketStream,
+  type QuoteUpdate,
+} from "@/lib/useMarketStream";
 import { useTieredPolling } from "@/lib/useTieredPolling";
 
 export default function OverviewPage() {
@@ -41,7 +46,13 @@ export default function OverviewPage() {
     };
   }, [loadOverview]);
 
+  // REST remains reconciliation; SSE quotes merge when the stream is up.
   useTieredPolling(true, "account", loadOverview);
+
+  const onQuote = useCallback((quote: QuoteUpdate) => {
+    setData((prev) => (prev ? applyQuoteToOverview(prev, quote) : prev));
+  }, []);
+  useMarketStream(true, onQuote);
 
   async function handleRefresh() {
     setError(null);
