@@ -63,3 +63,22 @@ Optional environment variables (defaults match `env.example`):
 | `POLL_INTERVAL` | `2` (seconds) |
 
 Bash requires `curl` plus `jq` or `python3` for JSON parsing.
+
+## Spec gate notes (V1)
+
+Verified against design spec §1.1 via codebase review and unit tests (`go test ./...` in `services/api`, `pytest` in `services/agents/common`). **Live Docker Compose smoke was not run** on the verification host because the Docker daemon was not running (`docker ps` failed); use the smoke scripts above when Docker is available.
+
+| Area | Status | Notes |
+|------|--------|-------|
+| EOD schedule + manual trigger | Implemented | Cron `30 16 * * 1-5` US/Eastern in API scheduler; `POST /api/v1/runs/eod` (JWT) and `POST /internal/eod/run` (internal token); web **Run EOD now** on `/runs`. |
+| Five agents / ledger boundary | Implemented | `agent-data`, `agent-research`, `agent-decision`, `agent-portfolio`, `agent-risk` in Compose; ledger fills only via Go `ledger.Service.ApplyFill`. |
+| Portfolio fields | Mostly implemented | Cash, positions, weights, stop-loss / take-profit on positions and UI; concentration in Go risk engine. |
+| Risk auto vs approval | Implemented | Go `risk.Evaluate` → auto fill or `awaiting_approval` + approval rows with `breach_reasons`. |
+| Compose stack | Present | `deploy/docker-compose.yml` + override: web, api, five agents, postgres, redis. |
+
+**Known gaps (honest, not silent TBD):**
+
+- **Alpaca market data** — `AlpacaMarketDataProvider` is a stub (`NotImplementedError`); default/local path uses `MARKET_DATA_PROVIDER=free` (Yahoo Finance).
+- **JWT expiry** — tokens are signed HS256 with `user_id` only; no `exp` claim (acceptable for single-user V1, rotate `JWT_SECRET` to invalidate).
+- **Max drawdown rule** — `max_drawdown` loads into the risk engine config but is **not evaluated** in `risk.Evaluate` (default `0` = disabled); NAV peak / drawdown is not shown in the web UI yet.
+- **Live E2E smoke** — not executed in final gate when Docker daemon unavailable; API integration tests with stubbed agents cover auto-exec and approval paths.
