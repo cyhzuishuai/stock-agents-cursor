@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { PortfolioPosition, PortfolioResponse } from "@/lib/types";
+import { useTieredPolling } from "@/lib/useTieredPolling";
 
 const currency = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -38,15 +39,18 @@ export default function PortfolioPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const loadPortfolio = useCallback(async () => {
+    const response = await api.get<PortfolioResponse>("/api/v1/portfolio");
+    setData(response);
+    setError(null);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
-        const response = await api.get<PortfolioResponse>("/api/v1/portfolio");
-        if (!cancelled) {
-          setData(response);
-        }
+        await loadPortfolio();
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -64,7 +68,9 @@ export default function PortfolioPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadPortfolio]);
+
+  useTieredPolling(true, "account", loadPortfolio);
 
   if (loading) {
     return <p className="empty-state">Loading portfolio…</p>;
