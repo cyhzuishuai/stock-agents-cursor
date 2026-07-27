@@ -53,7 +53,7 @@ export default function RunsPage() {
       const response = await api.post<EodRunResponse>("/api/v1/runs/eod", {});
       router.push(`/runs/${response.run_id}`);
     } catch (err) {
-      setEodError(err instanceof Error ? err.message : "Failed to start EOD run");
+      setEodError(err instanceof Error ? err.message : "Failed to start run");
     } finally {
       setEodLoading(false);
     }
@@ -75,7 +75,7 @@ export default function RunsPage() {
   return (
     <div className="runs">
       <header className="page-header">
-        <p className="page-header__eyebrow">EOD desk</p>
+        <p className="page-header__eyebrow">Trading desk</p>
         <div className="runs__header">
           <h1 className="page-header__title">Runs</h1>
           <div className="runs__actions">
@@ -85,7 +85,7 @@ export default function RunsPage() {
               disabled={eodLoading}
               onClick={() => void handleRunEod()}
             >
-              {eodLoading ? "Starting…" : "Run EOD now"}
+              {eodLoading ? "Starting…" : "Run now"}
             </button>
             <button
               type="button"

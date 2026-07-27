@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// EODRunner triggers an end-of-day workflow run.
+// EODRunner triggers a strategy workflow run (manual or scheduled). Name is historical.
 type EODRunner interface {
 	RunEOD(ctx context.Context, params workflow.RunParams) (uint, error)
 }

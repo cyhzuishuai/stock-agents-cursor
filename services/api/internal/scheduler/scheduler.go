@@ -26,7 +26,7 @@ const (
 	DefaultCronExpr = "30 16 * * 1-5"
 )
 
-// EODRunner runs the end-of-day workflow for a trade date.
+// EODRunner runs a strategy workflow tick (manual or scheduled). Name is historical.
 type EODRunner interface {
 	RunEOD(ctx context.Context, params workflow.RunParams) (uint, error)
 }

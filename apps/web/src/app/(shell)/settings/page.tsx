@@ -457,7 +457,7 @@ export default function SettingsPage() {
   return (
     <div className="settings">
       <header className="page-header">
-        <p className="page-header__eyebrow">EOD desk</p>
+        <p className="page-header__eyebrow">Trading desk</p>
         <h1 className="page-header__title">Settings</h1>
       </header>
 

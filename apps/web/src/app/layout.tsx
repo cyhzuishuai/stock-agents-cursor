@@ -20,7 +20,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Stock Agents",
-  description: "US equities EOD paper-trading dashboard",
+  description: "US equities strategy-driven paper-trading dashboard",
 };
 
 export default function RootLayout({

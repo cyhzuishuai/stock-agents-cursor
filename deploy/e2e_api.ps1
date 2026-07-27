@@ -95,14 +95,18 @@ try {
     $strategies = Invoke-Authed -Method Get -Path "/api/v1/strategies" -Token $token
     Assert-True ($null -ne $strategies) "GET /strategies returns list"
 
-    # Unique trade_date so re-runs hit a real EOD path (API rejects duplicate dates with 500).
+    # Default: US/Eastern calendar date today (same as API defaultTradeDate).
+    # Override with EOD_TRADE_DATE if needed. Same trade_date may be re-run (busy lock only).
     $tradeDate = if ($env:EOD_TRADE_DATE) {
         $env:EOD_TRADE_DATE
     } else {
-        (Get-Date).AddDays(-(Get-Random -Minimum 3 -Maximum 40)).ToString("yyyy-MM-dd")
+        [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId(
+            (Get-Date),
+            "Eastern Standard Time"
+        ).ToString("yyyy-MM-dd")
     }
     $eodBody = (@{ trade_date = $tradeDate } | ConvertTo-Json -Compress)
-    Write-E2E "POST /runs/eod trade_date=$tradeDate"
+    Write-E2E "POST /runs/eod trade_date=$tradeDate (US/Eastern)"
     $eod = Invoke-Authed -Method Post -Path "/api/v1/runs/eod" -Token $token -Body $eodBody
     Assert-True ([bool]$eod.run_id) "POST /runs/eod returns run_id"
     $runId = [string]$eod.run_id

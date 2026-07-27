@@ -39,7 +39,7 @@ describe("OverviewDashboard", () => {
     expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Refresh NAV chart" })).toBeTruthy();
     expect(screen.getByLabelText("US market clock")).toBeTruthy();
-    expect(screen.getByText(/eod desk/i)).toBeTruthy();
+    expect(screen.getByText(/trading desk/i)).toBeTruthy();
     expect(screen.getByText("NAV")).toBeTruthy();
     expect(screen.getByText("$50,000")).toBeTruthy();
     expect(screen.getAllByText(/\$\s*200,000/).length).toBeGreaterThan(0);

@@ -1,6 +1,12 @@
 # Docker Compose deployment
 
-**Authority (Phase 1):** Alpaca Paper is the source of truth for cash, equity, positions, orders, and fill prices. Go API is the only component that talks to Alpaca Trading. Postgres stores runs, proposals, approvals, and order mirrors for audit — not fill authority. See `docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`.
+## Authority (Phase 1)
+
+Alpaca Paper is the source of truth for cash, equity, positions, orders, and fill prices. Go API is the only component that talks to Alpaca Trading. Postgres stores runs, proposals, approvals, and order mirrors for audit — not fill authority. See `docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`.
+
+## Cadence (strategy-driven)
+
+Automatic runs come from the **active strategy** (pre-open + intraday jobs; hot-reload on activate/PATCH). Manual run: Web **Run now** or `POST /api/v1/runs/eod` / `POST /internal/eod/run` (path names are historical). `EOD_CRON` is legacy-only when no DB strategy is active. Spec: `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`.
 
 ## Environment file (`.env`)
 
@@ -58,7 +64,7 @@ docker compose up --build
 
 Health check: `curl http://localhost:8080/healthz`
 
-## EOD smoke test
+## Workflow smoke test
 
 After the stack is up, run the integration smoke script from the repo root or `deploy/`:
 
@@ -79,7 +85,7 @@ The script:
 
 1. Waits for `GET /healthz` (`status: ok`)
 2. Logs in via `POST /api/v1/auth/login` and obtains a JWT
-3. Triggers `POST /api/v1/runs/eod`
+3. Triggers a **manual** workflow run via `POST /api/v1/runs/eod`
 4. Polls `GET /api/v1/runs/:id` until status is `executed`, `awaiting_approval`, or `failed`
 5. Exits `0` on success (`executed` or `awaiting_approval`), `1` on `failed` or timeout
 
@@ -93,12 +99,13 @@ Optional environment variables for the smoke script (defaults match `env.example
 | `HEALTH_TIMEOUT` | `120` (seconds) |
 | `POLL_TIMEOUT` | `300` (seconds) |
 | `POLL_INTERVAL` | `2` (seconds) |
+| `EOD_TRADE_DATE` | *(e2e only)* default **US/Eastern today**; set to force a specific `YYYY-MM-DD` |
 
 Bash requires `curl` plus `jq` or `python3` for JSON parsing.
 
 ## API E2E (`e2e_api`)
 
-Broader than smoke: hits **Alpaca-backed** overview / portfolio / orders, strategies, runs, EOD → terminal status, approvals, settings, and stream endpoint (200 if enabled, **503** when `ALPACA_STREAM_ENABLED=false`). Same env vars as smoke. **Requires a running Compose stack** rebuilt with current images; local override uses `LLM_MODE=mock` for agents. **`ALPACA_API_KEY` / `ALPACA_API_SECRET` must be set** in `deploy/.env` or overview/portfolio/orders return `503 alpaca not configured`. EOD may submit **Paper** market orders when risk/`bypass_risk` allows.
+Broader than smoke: hits **Alpaca-backed** overview / portfolio / orders, strategies, runs, **manual workflow run** (default `trade_date` = **US/Eastern today**; override with `EOD_TRADE_DATE`) → terminal status, approvals, settings, and stream endpoint (200 if enabled, **503** when `ALPACA_STREAM_ENABLED=false`). Same env vars as smoke. **Requires a running Compose stack** rebuilt with current images; local override uses `LLM_MODE=mock` for agents. **`ALPACA_API_KEY` / `ALPACA_API_SECRET` must be set** in `deploy/.env` or overview/portfolio/orders return `503 alpaca not configured`. A run may submit **Paper** market orders when risk/`bypass_risk` allows.
 
 ```powershell
 # from deploy/ with stack up
@@ -109,20 +116,20 @@ powershell -ExecutionPolicy Bypass -File .\e2e_api.ps1
 chmod +x e2e_api.sh && ./e2e_api.sh
 ```
 
-**Last verified (local):** 2026-07-28 — `e2e_api.ps1` **17/17 PASS** against Compose (`MARKET_DATA_PROVIDER=alpaca`, Paper keys set, stream disabled → 503). EOD sample run terminal status `executed`.
+**Last verified (local):** 2026-07-28 — `e2e_api.ps1` **17/17 PASS** against Compose (`MARKET_DATA_PROVIDER=alpaca`, Paper keys set, stream disabled → 503). Sample manual run terminal status `executed`.
 
-## Spec gate notes (V1 + Alpaca Phase 1)
+## Spec gate notes (V1 + strategy cadence + Alpaca Phase 1)
 
 Verified against design specs via unit tests (`go test ./...` in `services/api`, `pytest` in `services/agents/common`, Vitest in `apps/web`) and **live Compose E2E** (`deploy/e2e_api.ps1`, 2026-07-28).
 
 | Area | Status | Notes |
 |------|--------|-------|
-| EOD schedule + manual trigger | Implemented | **DB active strategy is authoritative** (pre-open + intraday ticks via `strategy.BuildJobSpecs`; hot-reload on activate/PATCH). `EOD_CRON` is **legacy only** (unused when a strategy is active; no active strategy → no automatic ticks). Manual: `POST /api/v1/runs/eod` (JWT) and `POST /internal/eod/run` (internal token); web **Run EOD now** on `/runs`. |
-| Five agents / broker boundary | Implemented | `agent-data`, `agent-research`, `agent-decision`, `agent-portfolio`, `agent-risk` in Compose; agents proposal-only; Go submits to Alpaca Paper after risk gate or `bypass_risk`. |
-| Alpaca Paper authority | Implemented (Phase 1 + SSE client) | `AlpacaMarketDataProvider` fetches daily bars; Go `internal/broker` submits market orders; Overview/Portfolio/Orders read Alpaca with short TTL cache; frontend tiered polling + optional JWT SSE quote merge. **E2E covered.** |
-| Portfolio fields | Mostly implemented | Cash/positions from Alpaca; local `stop_loss` / `take_profit` on positions when mirrored; concentration in Go risk engine. |
-| Risk + execution modes | Implemented | `require_approval`, `auto_reject_breaches`, `bypass_risk`; Go `risk.Evaluate` → submit, approval, or reject per mode. |
-| Compose stack | Present | `deploy/docker-compose.yml` + override: web, api, five agents, postgres, redis. |
+| Strategy schedule + manual trigger | Implemented | **DB active strategy is authoritative** (pre-open + intraday via `strategy.BuildJobSpecs`; hot-reload). `EOD_CRON` is **legacy only**. Manual: `POST /api/v1/runs/eod` / `POST /internal/eod/run`; web **Run now**. |
+| Five agents / broker boundary | Implemented | Agents proposal-only; Go submits to Alpaca Paper after risk gate or `bypass_risk`. |
+| Alpaca Paper authority | Implemented (Phase 1 + SSE client) | Bars, broker submit, Overview/Portfolio/Orders from Alpaca; tiered polling + optional JWT SSE. **E2E covered.** |
+| Portfolio fields | Mostly implemented | Cash/positions from Alpaca; local stop/TP when mirrored; concentration in Go risk. |
+| Risk + execution modes | Implemented | `require_approval`, `auto_reject_breaches`, `bypass_risk`. |
+| Compose stack | Present | web, api, five agents, postgres, redis. |
 
 **Known gaps (honest, not silent TBD):**
 

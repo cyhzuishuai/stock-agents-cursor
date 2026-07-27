@@ -1,12 +1,15 @@
-# EOD 纸面交易流程图
+# 策略驱动纸面交易流程图
 
-对应设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`。  
-**现金 / 持仓 / 订单权威**：`docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`（Phase 1 已落地）。  
-策略调度与可观测性见 `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`。
+> 文件名含历史 `eod` 前缀；**产品节奏由激活策略决定**（pre-open / intraday），不是单一日终 cron。
+
+对应设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`（V1 基线）。  
+**调度与 Runs 可观测性**：`docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`（**取代** V1「仅 EOD」节奏）。  
+**现金 / 持仓 / 订单权威**：`docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`（Phase 1 已落地）。
 
 ## 策略驱动调度与 execution_mode
 
-- **Cadence**：由当前**激活策略**决定，不再依赖固定单一 cron。默认含 **pre-open**（常规开盘前，如 09:20 ET）与 **intraday**（盘中定时，如 10:00–15:00 每小时）两类触发；调度器随策略切换热重载。
+- **Cadence**：由当前**激活策略**决定。默认含 **pre-open**（常规开盘前，如 09:20 ET）与 **intraday**（盘中定时，如 10:00–15:00 每小时）两类触发；调度器随策略切换热重载。无激活策略时**不注册**自动 tick。
+- **手动触发**：Web「Run now」→ `POST /api/v1/runs/eod`（路径名为历史遗留）；`trigger=manual`，并挂上当前激活 `strategy_id`（若有）。
 - **`require_approval`**：Go 风控超限 → 创建 approval；人工 `approved` 后向 Alpaca Paper 提交订单。
 - **`auto_reject_breaches`**：Go 风控超限**不创建** approval，提案直接 `rejected`；无其余待审项时 run 仍可终态为 `executed`。
 - **`bypass_risk`**：跳过 Go 风控；可执行提案直接向 Alpaca Paper 提交市价单。
@@ -21,7 +24,7 @@ flowchart TB
 
   subgraph api [Go API — 编排与网关]
     Auth[JWT Auth]
-    WF[EOD 工作流编排]
+    WF[工作流编排]
     RiskGo[确定性风控引擎]
     Broker[Alpaca Paper 客户端]
     Approvals[审批 API]
@@ -81,11 +84,11 @@ flowchart TB
 - Go 在风控通过、`bypass_risk` 或审批 `approved` 后向 Alpaca 提交市价单；Postgres 仅存 runs / proposals / approvals 及订单镜像（审计）。
 - Python Risk 输出仅供审计；Go 规则引擎为最终判定（`bypass_risk` 时跳过）。
 
-## 2. 日终主流程
+## 2. 工作流主流程（策略 tick / 手动）
 
 ```mermaid
 flowchart TD
-  Start([cron / 手动 Run EOD]) --> Lock{Redis 锁<br/>trade_date}
+  Start([策略调度 pre-open/intraday<br/>或手动 Run now]) --> Lock{Redis 全局 busy 锁}
   Lock -->|获取失败| Abort([跳过 / 已有运行中])
   Lock -->|成功| Create[创建 workflow_run<br/>加载账户快照 + 观察列表]
 
@@ -154,7 +157,7 @@ V1 默认规则示例：
 | 单票最大权重 | 20% |
 | 最低现金比例 | 10% |
 
-允许部分提交：未超限的提案立刻提交 Alpaca，超限提案按模式 reject 或等待审批。成交价以 Alpaca fill 为准，不再使用本地 EOD close 作为成交权威。
+允许部分提交：未超限的提案立刻提交 Alpaca，超限提案按模式 reject 或等待审批。成交价以 Alpaca fill 为准，不再使用本地日线 close 作为成交权威。
 
 ## 4. Agent 调用链（时序）
 
@@ -170,9 +173,9 @@ sequenceDiagram
   participant Ri as agent-risk
   participant DB as PostgreSQL
 
-  Cron->>API: POST /internal/eod/run
-  API->>R: 获取 trade_date 锁
-  API->>DB: 创建 workflow_run + 账户快照
+  Cron->>API: 策略 tick /internal/eod/run<br/>(trigger=pre_open|intraday)
+  API->>R: 获取全局 busy 锁
+  API->>DB: 创建 workflow_run<br/>(strategy_id + trigger) + 账户快照
 
   API->>D: POST /v1/run
   D-->>API: data_result (+ schema 校验)

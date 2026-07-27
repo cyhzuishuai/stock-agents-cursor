@@ -80,8 +80,10 @@ assert_true 1 "GET /runs returns list"
 auth "${API_BASE_URL}/api/v1/strategies" >/dev/null
 assert_true 1 "GET /strategies returns list"
 
-TRADE_DATE="${EOD_TRADE_DATE:-$(python3 -c 'from datetime import date,timedelta; import random; print((date.today()-timedelta(days=random.randint(3,40))).isoformat())')}"
-log "POST /runs/eod trade_date=${TRADE_DATE}"
+# Default: US/Eastern calendar date today (same as API defaultTradeDate).
+# Override with EOD_TRADE_DATE if needed. Same trade_date may be re-run (busy lock only).
+TRADE_DATE="${EOD_TRADE_DATE:-$(python3 -c 'from datetime import datetime; from zoneinfo import ZoneInfo; print(datetime.now(ZoneInfo("America/New_York")).date().isoformat())')}"
+log "POST /runs/eod trade_date=${TRADE_DATE} (US/Eastern)"
 eod="$(curl -fsS --max-time 600 -X POST "${API_BASE_URL}/api/v1/runs/eod" \
   -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
   -d "{\"trade_date\":\"${TRADE_DATE}\"}")"

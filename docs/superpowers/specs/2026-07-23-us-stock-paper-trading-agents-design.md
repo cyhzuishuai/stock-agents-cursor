@@ -1,12 +1,19 @@
 # US Stock Paper-Trading Multi-Agent System — Design Spec
 
 **Date:** 2026-07-23  
-**Status:** Draft for user review  
+**Status:** Historical V1 baseline (partially superseded)  
 **Version:** V1 (paper trading only)
+
+> **Supersessions (read these first for current product behavior):**  
+> - **Cadence / scheduling / runs observability:** `2026-07-28-strategy-scheduler-runs-observability-design.md` — product is **strategy-driven** (pre-open + intraday), not single EOD cron.  
+> - **Cash / positions / orders authority:** `2026-07-28-alpaca-paper-authority-design.md` — Alpaca Paper is source of truth (local ledger no longer authoritative).  
+> - **Watchlist / risk Settings edit:** `2026-07-28-settings-watchlist-risk-edit-design.md`.
 
 ## 1. Goal
 
-Build a self-hosted **US equities paper-trading** system where multiple specialized agents produce end-of-day (EOD) trade proposals, a Go service applies **deterministic risk rules**, and human approval is required only when thresholds are breached. The UI provides a portfolio-centric overview (NAV, cash, positions, runs, approvals).
+Build a self-hosted **US equities paper-trading** system where multiple specialized agents produce trade proposals on a schedule, a Go service applies **deterministic risk rules**, and human approval is required only when thresholds are breached. The UI provides a portfolio-centric overview (NAV, cash, positions, runs, approvals).
+
+> V1 text below originally assumed a single post-close EOD run; **shipping cadence is strategy-driven** (see supersession note above).
 
 ### 1.1 Success criteria (V1)
 
@@ -35,7 +42,7 @@ Build a self-hosted **US equities paper-trading** system where multiple speciali
 | Frontend | Next.js App Router |
 | Agents | Data → Research → Decision → Portfolio → Risk |
 | Approval | Deterministic rule thresholds; auto vs `awaiting_approval` |
-| Cadence | EOD (US/Eastern after close) |
+| Cadence | ~~EOD (US/Eastern after close)~~ **Superseded:** strategy pre-open + intraday — see `2026-07-28-strategy-scheduler-runs-observability-design.md` |
 | Market data | Adapter layer; **implement free provider first**; default config path toward Alpaca Market Data; `MARKET_DATA_PROVIDER=free\|alpaca` |
 | Agent intelligence | LLM + structured JSON for research/decision/(portfolio assist); risk gates are rules in Go |
 | Users | Single admin user (JWT) |

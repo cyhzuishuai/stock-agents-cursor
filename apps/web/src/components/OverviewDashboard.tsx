@@ -30,7 +30,7 @@ export function OverviewDashboard({
   return (
     <div className="overview">
       <header className="page-header">
-        <p className="page-header__eyebrow">EOD desk</p>
+        <p className="page-header__eyebrow">Trading desk</p>
         <div className="runs__header">
           <h1 className="page-header__title">Overview</h1>
           {onRefresh ? (

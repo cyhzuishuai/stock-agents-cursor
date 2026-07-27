@@ -79,7 +79,7 @@ export default function ApprovalsPage() {
   return (
     <div className="runs">
       <header className="page-header">
-        <p className="page-header__eyebrow">EOD desk</p>
+        <p className="page-header__eyebrow">Trading desk</p>
         <div className="runs__header">
           <h1 className="page-header__title">Approvals</h1>
           <div className="runs__actions">
@@ -99,7 +99,7 @@ export default function ApprovalsPage() {
       <section className="panel">
         {approvals.length === 0 ? (
           <p className="empty-state">
-            No pending approvals. Wait for the next EOD run.
+            No pending approvals. Wait for the next scheduled run.
           </p>
         ) : (
           <table className="data-table">
