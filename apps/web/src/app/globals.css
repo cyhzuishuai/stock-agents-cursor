@@ -762,3 +762,70 @@ textarea:focus-visible {
   border-bottom: none;
   padding-bottom: 0;
 }
+
+.settings__panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.settings__panel-header .panel__title {
+  margin: 0;
+}
+
+.settings__badge {
+  color: var(--ink-muted);
+  font-size: 0.8125rem;
+}
+
+.settings__row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.settings__form {
+  margin-top: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings__form-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.settings__form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0.75rem 1rem;
+}
+
+.settings__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.settings__field--wide {
+  grid-column: 1 / -1;
+}
+
+.settings__field label {
+  font-size: 0.875rem;
+  color: var(--ink-muted);
+}
+
+.settings__field input,
+.settings__field select {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 0.25rem;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}

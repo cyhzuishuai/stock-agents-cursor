@@ -43,8 +43,10 @@ function buildUrl(
   return url.toString();
 }
 
+type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
+
 async function request<T>(
-  method: "GET" | "POST",
+  method: HttpMethod,
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -93,5 +95,11 @@ export const api = {
   },
   post<T>(path: string, body?: unknown): Promise<T> {
     return request<T>("POST", path, body);
+  },
+  patch<T>(path: string, body?: unknown): Promise<T> {
+    return request<T>("PATCH", path, body);
+  },
+  delete<T>(path: string): Promise<T> {
+    return request<T>("DELETE", path);
   },
 };

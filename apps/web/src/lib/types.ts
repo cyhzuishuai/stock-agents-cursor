@@ -142,3 +142,29 @@ export interface SettingsResponse {
   risk_rules: Record<string, unknown>;
   market_data_provider: string;
 }
+
+// Strategies
+export type ExecutionMode = "auto_reject_breaches" | "require_approval";
+
+export interface Strategy {
+  id: number;
+  name: string;
+  description: string;
+  is_system_default: boolean;
+  is_active: boolean;
+  pre_open_minutes: number;
+  intraday_every_minutes: number;
+  intraday_start_et: string;
+  intraday_end_et: string;
+  execution_mode: ExecutionMode;
+}
+
+export interface StrategyWriteBody {
+  name: string;
+  description: string;
+  pre_open_minutes: number;
+  intraday_every_minutes: number;
+  intraday_start_et: string;
+  intraday_end_et: string;
+  execution_mode: ExecutionMode;
+}
