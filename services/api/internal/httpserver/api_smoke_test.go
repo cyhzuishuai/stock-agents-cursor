@@ -17,6 +17,7 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/httpserver"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
 	"github.com/cyh/stock-agents/services/api/internal/models"
+	"github.com/cyh/stock-agents/services/api/internal/strategy"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -40,6 +41,10 @@ func (s *stubRunner) RunEOD(_ context.Context, tradeDate string, _ bool) (uint, 
 }
 
 func setupAPI(t *testing.T) (*gin.Engine, *gorm.DB, string, *stubRunner, *config.Config) {
+	return setupAPIWithScheduler(t, httpserver.NoopSchedulerReloader{})
+}
+
+func setupAPIWithScheduler(t *testing.T, scheduler httpserver.SchedulerReloader) (*gin.Engine, *gorm.DB, string, *stubRunner, *config.Config) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -70,14 +75,17 @@ func setupAPI(t *testing.T) (*gin.Engine, *gorm.DB, string, *stubRunner, *config
 	ledgerSvc := &ledger.Service{DB: gormDB}
 	approvalsSvc := &approvals.Service{DB: gormDB, Ledger: ledgerSvc}
 	runner := &stubRunner{runID: 99}
+	strategiesSvc := &strategy.Service{DB: gormDB}
 
 	router := httpserver.NewRouter(httpserver.RouterDeps{
-		DB:        gormDB,
-		JWTSecret: cfg.JWTSecret,
-		Runner:    runner,
-		Approvals: approvalsSvc,
-		Ledger:    ledgerSvc,
-		Config:    cfg,
+		DB:         gormDB,
+		JWTSecret:  cfg.JWTSecret,
+		Runner:     runner,
+		Approvals:  approvalsSvc,
+		Ledger:     ledgerSvc,
+		Config:     cfg,
+		Strategies: strategiesSvc,
+		Scheduler:  scheduler,
 	})
 	return router, gormDB, cfg.JWTSecret, runner, cfg
 }
@@ -171,6 +179,7 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		"/api/v1/portfolio",
 		"/api/v1/runs",
 		"/api/v1/settings",
+		"/api/v1/strategies",
 		"/api/v1/approvals",
 	}
 	for _, path := range paths {

@@ -13,6 +13,7 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
 	"github.com/cyh/stock-agents/services/api/internal/risk"
 	"github.com/cyh/stock-agents/services/api/internal/scheduler"
+	"github.com/cyh/stock-agents/services/api/internal/strategy"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/redis/go-redis/v9"
 )
@@ -93,12 +94,14 @@ func main() {
 	}
 
 	router := httpserver.NewRouter(httpserver.RouterDeps{
-		DB:        gormDB,
-		JWTSecret: cfg.JWTSecret,
-		Runner:    eodRunner,
-		Approvals: approvalsSvc,
-		Ledger:    ledgerSvc,
-		Config:    cfg,
+		DB:         gormDB,
+		JWTSecret:  cfg.JWTSecret,
+		Runner:     eodRunner,
+		Approvals:  approvalsSvc,
+		Ledger:     ledgerSvc,
+		Config:     cfg,
+		Strategies: &strategy.Service{DB: gormDB},
+		Scheduler:  httpserver.NoopSchedulerReloader{},
 	})
 
 	addr := os.Getenv("API_ADDR")

@@ -35,12 +35,14 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 	})
 
 	api := &API{
-		DB:        deps.DB,
-		JWTSecret: deps.JWTSecret,
-		Runner:    deps.Runner,
-		Approvals: deps.Approvals,
-		Ledger:    deps.Ledger,
-		Config:    deps.Config,
+		DB:         deps.DB,
+		JWTSecret:  deps.JWTSecret,
+		Runner:     deps.Runner,
+		Approvals:  deps.Approvals,
+		Ledger:     deps.Ledger,
+		Config:     deps.Config,
+		Strategies: deps.Strategies,
+		Scheduler:  deps.Scheduler,
 	}
 	authHandlers := &auth.Handlers{DB: deps.DB, JWTSecret: deps.JWTSecret}
 	approvalHandlers := &approvals.Handlers{Service: deps.Approvals, JWTSecret: deps.JWTSecret}
@@ -62,6 +64,12 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			authed.GET("/approvals", api.ListApprovals)
 			authed.POST("/approvals/:id/decide", approvalHandlers.Decide)
 			authed.GET("/settings", api.Settings)
+			authed.GET("/strategies", api.ListStrategies)
+			authed.GET("/strategies/:id", api.GetStrategy)
+			authed.POST("/strategies", api.CreateStrategy)
+			authed.PATCH("/strategies/:id", api.PatchStrategy)
+			authed.POST("/strategies/:id/activate", api.ActivateStrategy)
+			authed.DELETE("/strategies/:id", api.DeleteStrategy)
 		}
 	}
 

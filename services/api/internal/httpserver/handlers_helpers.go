@@ -9,6 +9,7 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/config"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
 	"github.com/cyh/stock-agents/services/api/internal/models"
+	"github.com/cyh/stock-agents/services/api/internal/strategy"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -19,24 +20,38 @@ type EODRunner interface {
 	RunEOD(ctx context.Context, tradeDate string, force bool) (uint, error)
 }
 
+// SchedulerReloader hot-reloads scheduler jobs from the active strategy.
+type SchedulerReloader interface {
+	Reload(ctx context.Context) error
+}
+
+// NoopSchedulerReloader satisfies SchedulerReloader without side effects.
+type NoopSchedulerReloader struct{}
+
+func (NoopSchedulerReloader) Reload(context.Context) error { return nil }
+
 // RouterDeps are dependencies for NewRouter.
 type RouterDeps struct {
-	DB        *gorm.DB
-	JWTSecret string
-	Runner    EODRunner
-	Approvals *approvals.Service
-	Ledger    *ledger.Service
-	Config    *config.Config
+	DB         *gorm.DB
+	JWTSecret  string
+	Runner     EODRunner
+	Approvals  *approvals.Service
+	Ledger     *ledger.Service
+	Config     *config.Config
+	Strategies *strategy.Service
+	Scheduler  SchedulerReloader
 }
 
 // API holds shared handler dependencies.
 type API struct {
-	DB        *gorm.DB
-	JWTSecret string
-	Runner    EODRunner
-	Approvals *approvals.Service
-	Ledger    *ledger.Service
-	Config    *config.Config
+	DB         *gorm.DB
+	JWTSecret  string
+	Runner     EODRunner
+	Approvals  *approvals.Service
+	Ledger     *ledger.Service
+	Config     *config.Config
+	Strategies *strategy.Service
+	Scheduler  SchedulerReloader
 }
 
 func (h *API) loadAccount(c *gin.Context) (models.Account, error) {
