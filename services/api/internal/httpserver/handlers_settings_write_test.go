@@ -67,3 +67,38 @@ func TestWatchlistCRUD(t *testing.T) {
 		t.Fatalf("DELETE missing: got %d", w5.Code)
 	}
 }
+
+func TestRiskPatch(t *testing.T) {
+	router, gormDB, secret, _, _ := setupAPI(t)
+	token := bearerToken(t, secret, gormDB)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/settings/risk/max_order_notional",
+		bytes.NewBufferString(`{"value":12345}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH existing: got %d body=%s", w.Code, w.Body.String())
+	}
+
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPatch, "/api/v1/settings/risk/does_not_exist",
+		bytes.NewBufferString(`{"value":1}`))
+	req2.Header.Set("Authorization", "Bearer "+token)
+	req2.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusNotFound {
+		t.Fatalf("PATCH missing: got %d", w2.Code)
+	}
+
+	w3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodPatch, "/api/v1/settings/risk/max_order_notional",
+		bytes.NewBufferString(`{"value":"nope"}`))
+	req3.Header.Set("Authorization", "Bearer "+token)
+	req3.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH bad value: got %d", w3.Code)
+	}
+}

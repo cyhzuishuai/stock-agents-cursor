@@ -67,6 +67,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			authed.POST("/settings/watchlist", api.AddWatchlistSymbol)
 			authed.PATCH("/settings/watchlist/:symbol", api.PatchWatchlistSymbol)
 			authed.DELETE("/settings/watchlist/:symbol", api.DeleteWatchlistSymbol)
+			authed.PATCH("/settings/risk/:key", api.PatchRiskRule)
 			authed.GET("/strategies", api.ListStrategies)
 			authed.GET("/strategies/:id", api.GetStrategy)
 			authed.POST("/strategies", api.CreateStrategy)

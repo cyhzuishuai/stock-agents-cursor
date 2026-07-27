@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"math"
 	"net/http"
 	"strings"
 
@@ -15,6 +16,10 @@ type watchlistCreateRequest struct {
 
 type watchlistPatchRequest struct {
 	CanHold *bool `json:"can_hold"`
+}
+
+type riskPatchRequest struct {
+	Value *float64 `json:"value"`
 }
 
 func normalizeSymbol(s string) string {
@@ -118,4 +123,29 @@ func (h *API) DeleteWatchlistSymbol(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *API) PatchRiskRule(c *gin.Context) {
+	key := strings.TrimSpace(c.Param("key"))
+	var req riskPatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Value == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "value required as number"})
+		return
+	}
+	v := *req.Value
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "value must be finite"})
+		return
+	}
+	var row models.RiskRuleConfig
+	if err := h.DB.WithContext(c.Request.Context()).Where("key = ?", key).First(&row).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "risk key not found"})
+		return
+	}
+	row.ValueFloat = v
+	if err := h.DB.WithContext(c.Request.Context()).Save(&row).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"key": row.Key, "value": row.ValueFloat})
 }
