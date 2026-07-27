@@ -49,7 +49,6 @@ func main() {
 	}
 
 	ledgerSvc := &ledger.Service{DB: gormDB}
-	approvalsSvc := &approvals.Service{DB: gormDB, Ledger: ledgerSvc}
 
 	var brokerClient broker.Client
 	if alpaca, err := broker.NewAlpaca(cfg); err != nil {
@@ -57,6 +56,8 @@ func main() {
 	} else {
 		brokerClient = broker.NewCachedClient(alpaca, 5*time.Second)
 	}
+
+	approvalsSvc := &approvals.Service{DB: gormDB, Ledger: ledgerSvc, Broker: brokerClient}
 
 	var eodRunner httpserver.EODRunner
 	if cfg.RedisURL != "" {

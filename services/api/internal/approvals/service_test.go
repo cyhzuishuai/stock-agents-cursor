@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/cyh/stock-agents/services/api/internal/approvals"
+	"github.com/cyh/stock-agents/services/api/internal/broker"
 	"github.com/cyh/stock-agents/services/api/internal/config"
 	"github.com/cyh/stock-agents/services/api/internal/db"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
@@ -17,8 +19,66 @@ import (
 
 const tradeDate = "2026-07-22"
 
-func TestDecideApprovedFillsAndExecutesRun(t *testing.T) {
-	svc, gormDB, runID, approvalID := setupPendingApproval(t)
+type fakeBroker struct {
+	mu          sync.Mutex
+	submitCalls []broker.OrderRequest
+	get         map[string]broker.Order
+	nextID      int
+	acct        broker.Account
+}
+
+func (f *fakeBroker) GetAccount(ctx context.Context) (broker.Account, error) {
+	return f.acct, nil
+}
+
+func (f *fakeBroker) ListPositions(ctx context.Context) ([]broker.Position, error) {
+	return nil, nil
+}
+
+func (f *fakeBroker) SubmitOrder(ctx context.Context, req broker.OrderRequest) (broker.Order, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.submitCalls = append(f.submitCalls, req)
+	f.nextID++
+	id := fmt.Sprintf("brk-%d", f.nextID)
+	o := broker.Order{
+		ID:             id,
+		ClientOrderID:  req.ClientOrderID,
+		Symbol:         req.Symbol,
+		Side:           req.Side,
+		Qty:            req.Qty,
+		FilledQty:      req.Qty,
+		FilledAvgPrice: 191,
+		Status:         "filled",
+	}
+	if f.get == nil {
+		f.get = map[string]broker.Order{}
+	}
+	f.get[id] = o
+	return o, nil
+}
+
+func (f *fakeBroker) GetOrder(ctx context.Context, brokerOrderID string) (broker.Order, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if o, ok := f.get[brokerOrderID]; ok {
+		return o, nil
+	}
+	return broker.Order{}, fmt.Errorf("order not found: %s", brokerOrderID)
+}
+
+func (f *fakeBroker) ListOrders(ctx context.Context, status string) ([]broker.Order, error) {
+	return nil, nil
+}
+
+func TestDecideApprovedSubmitsToBroker(t *testing.T) {
+	fb := &fakeBroker{acct: broker.Account{Cash: 100000, Equity: 100000}}
+	svc, gormDB, runID, approvalID := setupPendingApproval(t, fb)
+
+	var accountBefore models.Account
+	if err := gormDB.First(&accountBefore).Error; err != nil {
+		t.Fatalf("account before: %v", err)
+	}
 
 	if err := svc.Decide(context.Background(), approvalID, approvals.DecisionApproved, "ok", 1); err != nil {
 		t.Fatalf("Decide: %v", err)
@@ -44,7 +104,70 @@ func TestDecideApprovedFillsAndExecutesRun(t *testing.T) {
 	if err := gormDB.Find(&orders).Error; err != nil {
 		t.Fatalf("orders: %v", err)
 	}
-	if len(orders) != 1 || orders[0].FillPrice != 191 || orders[0].Qty != 100 {
+	if len(orders) != 1 {
+		t.Fatalf("orders: got %d want 1 (%+v)", len(orders), orders)
+	}
+	if orders[0].BrokerOrderID == "" {
+		t.Fatalf("expected BrokerOrderID on mirror order: %+v", orders[0])
+	}
+	if orders[0].FillPrice != 191 || orders[0].Qty != 100 || orders[0].Status != "filled" {
+		t.Fatalf("orders: %+v", orders)
+	}
+
+	var run models.WorkflowRun
+	if err := gormDB.First(&run, runID).Error; err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if run.Status != workflow.StatusExecuted {
+		t.Fatalf("run status: got %q want executed", run.Status)
+	}
+
+	var accountAfter models.Account
+	if err := gormDB.First(&accountAfter).Error; err != nil {
+		t.Fatalf("account after: %v", err)
+	}
+	if accountAfter.Cash != accountBefore.Cash {
+		t.Fatalf("ledger cash changed on approve: before %v after %v", accountBefore.Cash, accountAfter.Cash)
+	}
+
+	var nav models.NavSnapshot
+	if err := gormDB.Where("trade_date = ?", tradeDate).First(&nav).Error; err != nil {
+		t.Fatalf("nav: %v", err)
+	}
+	if nav.Nav != 100000 {
+		t.Fatalf("nav: got %v want 100000", nav.Nav)
+	}
+}
+
+func TestDecideApprovedFillsAndExecutesRun(t *testing.T) {
+	fb := &fakeBroker{acct: broker.Account{Cash: 100000, Equity: 100000}}
+	svc, gormDB, runID, approvalID := setupPendingApproval(t, fb)
+
+	if err := svc.Decide(context.Background(), approvalID, approvals.DecisionApproved, "ok", 1); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+
+	var approval models.Approval
+	if err := gormDB.First(&approval, approvalID).Error; err != nil {
+		t.Fatalf("approval: %v", err)
+	}
+	if approval.Status != workflow.ApprovalApproved || approval.Note != "ok" || *approval.DecidedBy != 1 {
+		t.Fatalf("approval: %+v", approval)
+	}
+
+	var proposal models.TradeProposal
+	if err := gormDB.Where("run_id = ?", runID).First(&proposal).Error; err != nil {
+		t.Fatalf("proposal: %v", err)
+	}
+	if proposal.Status != workflow.ProposalFilled {
+		t.Fatalf("proposal status: got %q want filled", proposal.Status)
+	}
+
+	var orders []models.Order
+	if err := gormDB.Find(&orders).Error; err != nil {
+		t.Fatalf("orders: %v", err)
+	}
+	if len(orders) != 1 || orders[0].BrokerOrderID == "" || orders[0].FillPrice != 191 || orders[0].Qty != 100 {
 		t.Fatalf("orders: %+v", orders)
 	}
 
@@ -60,8 +183,8 @@ func TestDecideApprovedFillsAndExecutesRun(t *testing.T) {
 	if err := gormDB.First(&account).Error; err != nil {
 		t.Fatalf("account: %v", err)
 	}
-	if account.Cash != 100000-19100 {
-		t.Fatalf("cash: got %v want %v", account.Cash, 100000-19100)
+	if account.Cash != 100000 {
+		t.Fatalf("cash: got %v want %v (no local ApplyFill)", account.Cash, 100000)
 	}
 
 	var nav models.NavSnapshot
@@ -74,7 +197,7 @@ func TestDecideApprovedFillsAndExecutesRun(t *testing.T) {
 }
 
 func TestDecideRejectedMarksProposalRejected(t *testing.T) {
-	svc, gormDB, runID, approvalID := setupPendingApproval(t)
+	svc, gormDB, runID, approvalID := setupPendingApproval(t, nil)
 
 	if err := svc.Decide(context.Background(), approvalID, approvals.DecisionRejected, "too big", 1); err != nil {
 		t.Fatalf("Decide: %v", err)
@@ -122,7 +245,7 @@ func TestDecideRejectedMarksProposalRejected(t *testing.T) {
 }
 
 func TestCancelRunOnAwaitingApprovalCancelsAndUpsertsNAV(t *testing.T) {
-	svc, gormDB, runID, approvalID := setupPendingApproval(t)
+	svc, gormDB, runID, approvalID := setupPendingApproval(t, nil)
 
 	if err := svc.CancelRun(context.Background(), runID); err != nil {
 		t.Fatalf("CancelRun: %v", err)
@@ -162,7 +285,8 @@ func TestCancelRunOnAwaitingApprovalCancelsAndUpsertsNAV(t *testing.T) {
 }
 
 func TestDecideApprovedTwiceDoesNotDoubleFill(t *testing.T) {
-	svc, gormDB, _, approvalID := setupPendingApproval(t)
+	fb := &fakeBroker{acct: broker.Account{Cash: 100000, Equity: 100000}}
+	svc, gormDB, _, approvalID := setupPendingApproval(t, fb)
 
 	if err := svc.Decide(context.Background(), approvalID, approvals.DecisionApproved, "ok", 1); err != nil {
 		t.Fatalf("Decide first: %v", err)
@@ -184,13 +308,14 @@ func TestDecideApprovedTwiceDoesNotDoubleFill(t *testing.T) {
 	if err := gormDB.First(&account).Error; err != nil {
 		t.Fatalf("account: %v", err)
 	}
-	if account.Cash != 100000-19100 {
-		t.Fatalf("cash: got %v want %v (no double debit)", account.Cash, 100000-19100)
+	if account.Cash != 100000 {
+		t.Fatalf("cash: got %v want %v (no local debit)", account.Cash, 100000)
 	}
 }
 
 func TestCancelRunOnExecutedDoesNotFlipToCancelled(t *testing.T) {
-	svc, gormDB, runID, approvalID := setupPendingApproval(t)
+	fb := &fakeBroker{acct: broker.Account{Cash: 100000, Equity: 100000}}
+	svc, gormDB, runID, approvalID := setupPendingApproval(t, fb)
 
 	if err := svc.Decide(context.Background(), approvalID, approvals.DecisionApproved, "ok", 1); err != nil {
 		t.Fatalf("Decide: %v", err)
@@ -218,7 +343,7 @@ func TestCancelRunOnExecutedDoesNotFlipToCancelled(t *testing.T) {
 	}
 }
 
-func setupPendingApproval(t *testing.T) (*approvals.Service, *gorm.DB, uint, uint) {
+func setupPendingApproval(t *testing.T, br broker.Client) (*approvals.Service, *gorm.DB, uint, uint) {
 	t.Helper()
 
 	gormDB, err := db.ConnectSQLite(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name()))
@@ -275,6 +400,6 @@ func setupPendingApproval(t *testing.T) (*approvals.Service, *gorm.DB, uint, uin
 		t.Fatalf("create approval: %v", err)
 	}
 
-	svc := &approvals.Service{DB: gormDB, Ledger: &ledger.Service{DB: gormDB}}
+	svc := &approvals.Service{DB: gormDB, Ledger: &ledger.Service{DB: gormDB}, Broker: br}
 	return svc, gormDB, run.ID, approval.ID
 }

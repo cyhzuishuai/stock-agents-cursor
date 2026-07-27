@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cyh/stock-agents/services/api/internal/ledger"
+	"github.com/cyh/stock-agents/services/api/internal/broker"
 	"github.com/cyh/stock-agents/services/api/internal/models"
 	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"gorm.io/gorm"
@@ -29,13 +29,13 @@ var (
 
 // LedgerAPI is the ledger surface used by approvals.
 type LedgerAPI interface {
-	ApplyFill(ctx context.Context, req ledger.FillRequest) (models.Order, error)
 	UpsertNAV(ctx context.Context, tradeDate string, marks map[string]float64) (models.NavSnapshot, error)
 }
 
 type Service struct {
 	DB     *gorm.DB
 	Ledger LedgerAPI
+	Broker broker.Client
 }
 
 type dataBar struct {
@@ -51,8 +51,14 @@ func (s *Service) Decide(ctx context.Context, approvalID uint, decision, note st
 	if decision != DecisionApproved && decision != DecisionRejected {
 		return ErrInvalidDecision
 	}
+	if decision == DecisionApproved && s.Broker == nil {
+		return workflow.ErrBrokerNotConfigured
+	}
 
 	var run models.WorkflowRun
+	var proposal models.TradeProposal
+	var accountID uint
+
 	err := s.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var approval models.Approval
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&approval, approvalID).Error; err != nil {
@@ -65,7 +71,6 @@ func (s *Service) Decide(ctx context.Context, approvalID uint, decision, note st
 			return ErrApprovalNotPending
 		}
 
-		var proposal models.TradeProposal
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&proposal, approval.ProposalID).Error; err != nil {
 			return fmt.Errorf("load proposal: %w", err)
 		}
@@ -83,45 +88,25 @@ func (s *Service) Decide(ctx context.Context, approvalID uint, decision, note st
 			"note":       note,
 			"decided_by": decidedBy,
 		}
-		proposalStatus := workflow.ProposalRejected
 
 		if decision == DecisionApproved {
-			marks, err := loadMarksTx(tx, run.ID)
-			if err != nil {
-				return err
-			}
 			account, err := loadAccountTx(tx)
 			if err != nil {
 				return err
 			}
-			fillPrice, err := fillPriceForProposal(proposal, marks)
-			if err != nil {
-				return err
-			}
-			runID := run.ID
-			approvalIDCopy := approval.ID
-			if _, err := ledger.ApplyFillTx(tx, ledger.FillRequest{
-				AccountID:  account.ID,
-				RunID:      &runID,
-				ApprovalID: &approvalIDCopy,
-				Symbol:     proposal.Symbol,
-				Side:       proposal.Side,
-				Qty:        proposal.Qty,
-				FillPrice:  fillPrice,
-				TradeDate:  run.TradeDate,
-				StopLoss:   proposal.StopLoss,
-				TakeProfit: proposal.TakeProfit,
-			}); err != nil {
-				return fmt.Errorf("apply fill: %w", err)
-			}
+			accountID = account.ID
 			approvalUpdates["status"] = workflow.ApprovalApproved
-			proposalStatus = workflow.ProposalFilled
+			if err := tx.Model(&approval).Updates(approvalUpdates).Error; err != nil {
+				return fmt.Errorf("update approval: %w", err)
+			}
+			// Proposal status is updated by workflow.SubmitProposal after broker sync.
+			return nil
 		}
 
 		if err := tx.Model(&approval).Updates(approvalUpdates).Error; err != nil {
 			return fmt.Errorf("update approval: %w", err)
 		}
-		if err := tx.Model(&proposal).Update("status", proposalStatus).Error; err != nil {
+		if err := tx.Model(&proposal).Update("status", workflow.ProposalRejected).Error; err != nil {
 			return fmt.Errorf("update proposal: %w", err)
 		}
 		return nil
@@ -130,15 +115,30 @@ func (s *Service) Decide(ctx context.Context, approvalID uint, decision, note st
 		return err
 	}
 
+	if decision == DecisionApproved {
+		if err := workflow.SubmitProposal(ctx, s.DB, s.Broker, accountID, &run, &proposal); err != nil {
+			if errors.Is(err, workflow.ErrSubmitOrder) {
+				reasons, mErr := json.Marshal([]string{fmt.Sprintf("broker: %v", err)})
+				if mErr != nil {
+					return mErr
+				}
+				if uErr := s.DB.WithContext(ctx).Model(&proposal).Updates(map[string]any{
+					"status":              workflow.ProposalRejected,
+					"breach_reasons_json": string(reasons),
+				}).Error; uErr != nil {
+					return fmt.Errorf("reject proposal after submit failure: %w", uErr)
+				}
+			}
+			_ = s.refreshRunStatus(ctx, run.ID)
+			return err
+		}
+	}
+
 	if err := s.refreshRunStatus(ctx, run.ID); err != nil {
 		return err
 	}
-	marks, err := s.loadMarks(ctx, run.ID)
-	if err != nil {
+	if err := s.upsertNAV(ctx, run); err != nil {
 		return err
-	}
-	if _, err := s.Ledger.UpsertNAV(ctx, run.TradeDate, marks); err != nil {
-		return fmt.Errorf("upsert nav: %w", err)
 	}
 	return nil
 }
@@ -183,7 +183,51 @@ func (s *Service) CancelRun(ctx context.Context, runID uint) error {
 	if err := s.DB.WithContext(ctx).Model(&run).Update("status", workflow.StatusCancelled).Error; err != nil {
 		return err
 	}
-	if _, err := s.Ledger.UpsertNAV(ctx, run.TradeDate, marks); err != nil {
+	if err := s.upsertNAVWithMarks(ctx, run.TradeDate, marks); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) upsertNAV(ctx context.Context, run models.WorkflowRun) error {
+	marks, err := s.loadMarks(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	return s.upsertNAVWithMarks(ctx, run.TradeDate, marks)
+}
+
+func (s *Service) upsertNAVWithMarks(ctx context.Context, tradeDate string, marks map[string]float64) error {
+	if s.Broker != nil {
+		acct, err := s.Broker.GetAccount(ctx)
+		if err == nil {
+			cash := acct.Cash
+			nav := acct.Equity
+			if nav == 0 && acct.PortfolioValue > 0 {
+				nav = acct.PortfolioValue
+			}
+			equity := nav - cash
+			if equity < 0 {
+				equity = 0
+			}
+			snap := models.NavSnapshot{
+				TradeDate: tradeDate,
+				Cash:      cash,
+				Equity:    equity,
+				Nav:       nav,
+			}
+			var existing models.NavSnapshot
+			if err := s.DB.WithContext(ctx).Where("trade_date = ?", tradeDate).Limit(1).Find(&existing).Error; err != nil {
+				return err
+			}
+			if existing.ID == 0 {
+				return s.DB.WithContext(ctx).Create(&snap).Error
+			}
+			snap.ID = existing.ID
+			return s.DB.WithContext(ctx).Save(&snap).Error
+		}
+	}
+	if _, err := s.Ledger.UpsertNAV(ctx, tradeDate, marks); err != nil {
 		return fmt.Errorf("upsert nav: %w", err)
 	}
 	return nil
@@ -236,16 +280,6 @@ func loadMarksTx(tx *gorm.DB, runID uint) (map[string]float64, error) {
 		return nil, ErrMissingFillPrice
 	}
 	return marks, nil
-}
-
-func fillPriceForProposal(proposal models.TradeProposal, marks map[string]float64) (float64, error) {
-	if price, ok := marks[proposal.Symbol]; ok && price > 0 {
-		return price, nil
-	}
-	if proposal.Qty > 0 && proposal.EstimatedNotional > 0 {
-		return proposal.EstimatedNotional / proposal.Qty, nil
-	}
-	return 0, fmt.Errorf("%w: %s", ErrMissingFillPrice, proposal.Symbol)
 }
 
 func loadAccountTx(tx *gorm.DB) (models.Account, error) {
