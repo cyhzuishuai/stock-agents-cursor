@@ -95,11 +95,9 @@ def test_get_provider_free_and_env_default(monkeypatch: pytest.MonkeyPatch):
     assert isinstance(get_provider(), FreeMarketDataProvider)
 
 
-def test_get_provider_alpaca_stub_raises():
+def test_get_provider_alpaca():
     provider = get_provider("alpaca")
     assert isinstance(provider, AlpacaMarketDataProvider)
-    with pytest.raises(NotImplementedError, match="alpaca stub"):
-        provider.get_daily_bars(["AAPL"], "2026-07-22")
 
 
 def test_get_provider_reads_market_data_provider_env(monkeypatch: pytest.MonkeyPatch):
