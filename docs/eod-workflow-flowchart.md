@@ -1,6 +1,11 @@
 # EOD 纸面交易流程图
 
-对应设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`。
+对应设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`。策略调度与可观测性见 `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`。
+
+## 策略驱动调度与 auto_reject
+
+- **Cadence**：由当前**激活策略**决定，不再依赖固定单一 cron。默认含 **pre-open**（常规开盘前，如 09:20 ET）与 **intraday**（盘中定时，如 10:00–15:00 每小时）两类触发；调度器随策略切换热重载。
+- **`auto_reject_breaches`**：当策略 `execution_mode` 为此值时，Go 风控超限**不创建**待审 approval，提案直接标记 `rejected`；无其余待审项时 run 仍可终态为 `executed`（无需人工审批）。
 
 ## 1. 系统总览
 
@@ -104,7 +109,8 @@ flowchart TD
 flowchart LR
   P[trade_proposal] --> G{Go 规则}
   G -->|通过| F[纸面 fill<br/>更新 cash/positions/orders]
-  G -->|不通过| A[approval 待审]
+  G -->|不通过 + review 模式| A[approval 待审]
+  G -->|不通过 + auto_reject| R[提案 rejected<br/>不改账本]
 
   A --> H{人工}
   H -->|approved| F
