@@ -43,6 +43,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		Config:     deps.Config,
 		Strategies: deps.Strategies,
 		Scheduler:  deps.Scheduler,
+		HTTPClient: deps.HTTPClient,
 	}
 	authHandlers := &auth.Handlers{DB: deps.DB, JWTSecret: deps.JWTSecret}
 	approvalHandlers := &approvals.Handlers{Service: deps.Approvals, JWTSecret: deps.JWTSecret}
@@ -68,6 +69,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			authed.PATCH("/settings/watchlist/:symbol", api.PatchWatchlistSymbol)
 			authed.DELETE("/settings/watchlist/:symbol", api.DeleteWatchlistSymbol)
 			authed.PATCH("/settings/risk/:key", api.PatchRiskRule)
+			authed.GET("/symbols/search", api.SearchSymbols)
 			authed.GET("/strategies", api.ListStrategies)
 			authed.GET("/strategies/:id", api.GetStrategy)
 			authed.POST("/strategies", api.CreateStrategy)

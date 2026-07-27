@@ -40,6 +40,7 @@ type RouterDeps struct {
 	Config     *config.Config
 	Strategies *strategy.Service
 	Scheduler  SchedulerReloader
+	HTTPClient *http.Client
 }
 
 // API holds shared handler dependencies.
@@ -52,6 +53,7 @@ type API struct {
 	Config     *config.Config
 	Strategies *strategy.Service
 	Scheduler  SchedulerReloader
+	HTTPClient *http.Client
 }
 
 func (h *API) loadAccount(c *gin.Context) (models.Account, error) {
