@@ -24,6 +24,11 @@ export function reconnectBackoffMs(
   return Math.min(maxMs, delay);
 }
 
+/** HTTP statuses where SSE stops quietly (no reconnect). */
+export function shouldStopMarketStreamQuietly(status: number): boolean {
+  return status === 401 || status === 403 || status === 503;
+}
+
 /** Parse hub quote JSON (`symbol` + `p` or `price`). */
 export function parseQuotePayload(raw: string): QuoteUpdate | null {
   try {
@@ -116,7 +121,7 @@ function parseSseChunk(
 
 /**
  * Authenticated market quote SSE via fetch + ReadableStream (not EventSource).
- * On 503/disabled, stops quietly so tiered REST polling remains the source of truth.
+ * On 401/403/503, stops quietly so tiered REST polling remains the source of truth.
  * Transient failures reconnect with exponential backoff.
  */
 export function useMarketStream(
@@ -176,8 +181,8 @@ export function useMarketStream(
         return;
       }
 
-      // Stream disabled / unavailable — silent fallback to REST polling only.
-      if (res.status === 503) {
+      // Auth failure or stream disabled — silent fallback to REST polling only.
+      if (shouldStopMarketStreamQuietly(res.status)) {
         return;
       }
 
