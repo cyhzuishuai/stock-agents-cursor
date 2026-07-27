@@ -16,11 +16,18 @@ import (
 )
 
 var (
-	// ErrTradeDateExists is returned when a non-failed/non-cancelled run already exists for the trade date.
-	ErrTradeDateExists = errors.New("eod run already exists for trade_date")
 	// ErrInvalidPortfolioSchema is returned when portfolio agent output fails schema checks.
 	ErrInvalidPortfolioSchema = errors.New("invalid portfolio_result schema")
 )
+
+// RunParams configures a single EOD workflow execution.
+type RunParams struct {
+	TradeDate     string
+	Force         bool // retained for API compat; no longer blocks same-day sequential runs
+	StrategyID    *uint
+	Trigger       string // manual|pre_open|intraday|legacy_eod
+	ExecutionMode string // empty → require_approval (or strategy if StrategyID set)
+}
 
 // LedgerAPI is the ledger surface used by the EOD runner.
 type LedgerAPI interface {
@@ -69,38 +76,49 @@ type portfolioResult struct {
 	Proposals []portfolioProposal `json:"proposals"`
 }
 
-func (r *Runner) RunEOD(ctx context.Context, tradeDate string, force bool) (runID uint, err error) {
-	unlock, err := AcquireEODLock(ctx, r.Redis, tradeDate, DefaultLockTTL)
+func (r *Runner) RunEOD(ctx context.Context, params RunParams) (runID uint, err error) {
+	unlock, err := AcquireEODLock(ctx, r.Redis, DefaultLockTTL)
 	if err != nil {
 		return 0, err
 	}
 	defer unlock()
 
-	if !force {
-		var existing int64
-		if err := r.DB.WithContext(ctx).Model(&models.WorkflowRun{}).
-			Where("trade_date = ? AND status NOT IN ?", tradeDate, []string{StatusFailed, StatusCancelled}).
-			Count(&existing).Error; err != nil {
-			return 0, fmt.Errorf("check existing eod run: %w", err)
-		}
-		if existing > 0 {
-			return 0, fmt.Errorf("%w: %s", ErrTradeDateExists, tradeDate)
-		}
+	mode, err := r.resolveExecutionMode(ctx, params)
+	if err != nil {
+		return 0, err
 	}
 
 	run := models.WorkflowRun{
-		TradeDate: tradeDate,
-		Status:    StatusCreated,
+		TradeDate:  params.TradeDate,
+		Status:     StatusCreated,
+		StrategyID: params.StrategyID,
+		Trigger:    params.Trigger,
 	}
 	if err := r.DB.WithContext(ctx).Create(&run).Error; err != nil {
 		return 0, fmt.Errorf("create workflow run: %w", err)
 	}
 
-	return run.ID, r.runEOD(ctx, &run)
+	return run.ID, r.runEOD(ctx, &run, mode)
 }
 
-func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun) error {
-	marks, anyFill, err := r.runEODThroughFills(ctx, run)
+func (r *Runner) resolveExecutionMode(ctx context.Context, params RunParams) (string, error) {
+	if params.ExecutionMode != "" {
+		return params.ExecutionMode, nil
+	}
+	if params.StrategyID != nil {
+		var st models.Strategy
+		if err := r.DB.WithContext(ctx).First(&st, *params.StrategyID).Error; err != nil {
+			return "", fmt.Errorf("load strategy %d: %w", *params.StrategyID, err)
+		}
+		if st.ExecutionMode != "" {
+			return st.ExecutionMode, nil
+		}
+	}
+	return ExecutionModeRequireApproval, nil
+}
+
+func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun, executionMode string) error {
+	marks, anyFill, err := r.runEODThroughFills(ctx, run, executionMode)
 	if err != nil {
 		if anyFill {
 			_ = r.finalizeAfterPartialFill(ctx, run, err)
@@ -162,7 +180,7 @@ func (r *Runner) finalizeAfterPartialFill(ctx context.Context, run *models.Workf
 	}).Error
 }
 
-func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun) (map[string]float64, bool, error) {
+func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun, executionMode string) (map[string]float64, bool, error) {
 	account, err := r.loadAccount(ctx)
 	if err != nil {
 		return nil, false, err
@@ -308,6 +326,18 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 		if err != nil {
 			return nil, anyFill, err
 		}
+		if executionMode == ExecutionModeAutoReject {
+			p.Status = ProposalRejected
+			p.BreachReasonsJSON = string(reasons)
+			if err := r.DB.WithContext(ctx).Model(p).Updates(map[string]any{
+				"status":              ProposalRejected,
+				"breach_reasons_json": string(reasons),
+			}).Error; err != nil {
+				return nil, anyFill, err
+			}
+			continue
+		}
+
 		approval := models.Approval{
 			ProposalID:        p.ID,
 			Status:            ApprovalPending,

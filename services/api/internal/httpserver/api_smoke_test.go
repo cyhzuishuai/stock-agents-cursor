@@ -29,8 +29,8 @@ type stubRunner struct {
 	err           error
 }
 
-func (s *stubRunner) RunEOD(_ context.Context, tradeDate string, _ bool) (uint, error) {
-	s.lastTradeDate = tradeDate
+func (s *stubRunner) RunEOD(_ context.Context, params workflow.RunParams) (uint, error) {
+	s.lastTradeDate = params.TradeDate
 	if s.runID == 0 {
 		s.runID = 42
 	}

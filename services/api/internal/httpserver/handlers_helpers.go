@@ -17,7 +17,7 @@ import (
 
 // EODRunner triggers an end-of-day workflow run.
 type EODRunner interface {
-	RunEOD(ctx context.Context, tradeDate string, force bool) (uint, error)
+	RunEOD(ctx context.Context, params workflow.RunParams) (uint, error)
 }
 
 // SchedulerReloader hot-reloads scheduler jobs from the active strategy.
@@ -101,7 +101,11 @@ func (h *API) triggerEOD(c *gin.Context, tradeDate string, force bool) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "eod runner not configured"})
 		return
 	}
-	runID, err := h.Runner.RunEOD(c.Request.Context(), tradeDate, force)
+	runID, err := h.Runner.RunEOD(c.Request.Context(), workflow.RunParams{
+		TradeDate: tradeDate,
+		Force:     force,
+		Trigger:   workflow.TriggerManual,
+	})
 	if err != nil {
 		resp := gin.H{"error": err.Error()}
 		if runID != 0 {

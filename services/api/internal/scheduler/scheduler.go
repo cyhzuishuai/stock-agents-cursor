@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cyh/stock-agents/services/api/internal/workflow"
 	"github.com/robfig/cron/v3"
 )
 
@@ -25,7 +26,7 @@ const (
 
 // EODRunner runs the end-of-day workflow for a trade date.
 type EODRunner interface {
-	RunEOD(ctx context.Context, tradeDate string, force bool) (uint, error)
+	RunEOD(ctx context.Context, params workflow.RunParams) (uint, error)
 }
 
 // Options configures the EOD scheduler.
@@ -124,7 +125,10 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		return nil
 	}
 	tradeDate := TradeDate(now, s.loc)
-	_, err = s.runner.RunEOD(ctx, tradeDate, false)
+	_, err = s.runner.RunEOD(ctx, workflow.RunParams{
+		TradeDate: tradeDate,
+		Trigger:   workflow.TriggerLegacyEOD,
+	})
 	return err
 }
 

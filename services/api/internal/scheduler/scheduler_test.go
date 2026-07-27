@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cyh/stock-agents/services/api/internal/scheduler"
+	"github.com/cyh/stock-agents/services/api/internal/workflow"
 )
 
 func mustNY(t *testing.T) *time.Location {
@@ -73,8 +74,8 @@ type recordingRunner struct {
 	tradeDates []string
 }
 
-func (r *recordingRunner) RunEOD(_ context.Context, tradeDate string, _ bool) (uint, error) {
-	r.tradeDates = append(r.tradeDates, tradeDate)
+func (r *recordingRunner) RunEOD(_ context.Context, params workflow.RunParams) (uint, error) {
+	r.tradeDates = append(r.tradeDates, params.TradeDate)
 	return 1, nil
 }
 

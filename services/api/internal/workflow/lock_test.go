@@ -22,17 +22,37 @@ func TestAcquireEODLockDoubleAcquireFails(t *testing.T) {
 	defer rdb.Close()
 
 	ctx := context.Background()
-	tradeDate := "2026-07-23"
 	ttl := time.Minute
 
-	unlock, err := workflow.AcquireEODLock(ctx, rdb, tradeDate, ttl)
+	unlock, err := workflow.AcquireEODLock(ctx, rdb, ttl)
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
 	defer unlock()
 
-	_, err = workflow.AcquireEODLock(ctx, rdb, tradeDate, ttl)
+	_, err = workflow.AcquireEODLock(ctx, rdb, ttl)
 	if !errors.Is(err, workflow.ErrLockHeld) {
 		t.Fatalf("expected ErrLockHeld, got %v", err)
+	}
+}
+
+func TestAcquireEODLockUsesGlobalBusyKey(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	unlock, err := workflow.AcquireEODLock(context.Background(), rdb, time.Minute)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer unlock()
+
+	if !mr.Exists("eod:run:lock:busy") {
+		t.Fatal("expected global busy lock key eod:run:lock:busy")
 	}
 }

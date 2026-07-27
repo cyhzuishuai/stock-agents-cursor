@@ -30,9 +30,17 @@ const (
 	StepStatusOK     = "ok"
 	StepStatusFailed = "failed"
 
-	DefaultLockTTL       = 30 * time.Minute
-	DataAgentTimeout     = 60 * time.Second
-	LLMAgentTimeout      = 120 * time.Second
+	TriggerManual    = "manual"
+	TriggerPreOpen   = "pre_open"
+	TriggerIntraday  = "intraday"
+	TriggerLegacyEOD = "legacy_eod"
+
+	ExecutionModeAutoReject      = "auto_reject_breaches"
+	ExecutionModeRequireApproval = "require_approval"
+
+	DefaultLockTTL   = 30 * time.Minute
+	DataAgentTimeout = 60 * time.Second
+	LLMAgentTimeout  = 120 * time.Second
 )
 
 // AgentStep describes one sequential agent call in the EOD chain.
