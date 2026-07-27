@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,11 +11,19 @@ import (
 	"gorm.io/gorm"
 )
 
+var (
+	// ErrBrokerNotConfigured is returned when a submit is required but Runner.Broker is nil.
+	ErrBrokerNotConfigured = errors.New("alpaca broker not configured")
+	// ErrSubmitOrder wraps broker.SubmitOrder failures so callers can reject the proposal
+	// and continue other proposals without treating post-submit sync errors the same way.
+	ErrSubmitOrder = errors.New("submit order failed")
+)
+
 // SubmitProposal submits a market order to the broker, mirrors it locally, and polls until
 // terminal status (filled/canceled/rejected) or timeout. Extracted for reuse by approvals (Task 5).
 func SubmitProposal(ctx context.Context, db *gorm.DB, br broker.Client, accountID uint, run *models.WorkflowRun, p *models.TradeProposal) error {
 	if br == nil {
-		return fmt.Errorf("broker not configured")
+		return ErrBrokerNotConfigured
 	}
 	if db == nil {
 		return fmt.Errorf("db is nil")
@@ -33,7 +42,7 @@ func SubmitProposal(ctx context.Context, db *gorm.DB, br broker.Client, accountI
 		TimeInForce:   "day",
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrSubmitOrder, err)
 	}
 
 	runID := run.ID

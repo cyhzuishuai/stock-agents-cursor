@@ -378,7 +378,16 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 			continue
 		}
 
+		if r.Broker == nil {
+			return nil, anyFill, ErrBrokerNotConfigured
+		}
+
 		if err := r.submitAndSync(ctx, account.ID, run, p); err != nil {
+			if !errors.Is(err, ErrSubmitOrder) {
+				// Post-submit sync failure (mirror/GetOrder): leave proposal as submitted
+				// for reconciliation; fail the run instead of treating it as a reject.
+				return nil, anyFill, err
+			}
 			reasons, mErr := json.Marshal([]string{fmt.Sprintf("broker: %v", err)})
 			if mErr != nil {
 				return nil, anyFill, mErr
