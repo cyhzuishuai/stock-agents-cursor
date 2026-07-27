@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it } from "vitest";
 import { OverviewDashboard } from "./OverviewDashboard";
 import type { OverviewResponse } from "@/lib/types";
+
+afterEach(() => {
+  cleanup();
+});
 
 const fixture: OverviewResponse = {
   cash: 50000,
@@ -27,14 +32,17 @@ const fixture: OverviewResponse = {
 };
 
 describe("OverviewDashboard", () => {
-  it("renders cash, nav, approvals link, run status, positions, sparkline", () => {
-    render(<OverviewDashboard data={fixture} />);
+  it("renders cash, nav, market clock, approvals link, run status, positions, chart", () => {
+    render(<OverviewDashboard data={fixture} onRefresh={() => undefined} />);
 
     expect(screen.getByRole("heading", { name: /overview/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Refresh NAV chart" })).toBeTruthy();
+    expect(screen.getByLabelText("US market clock")).toBeTruthy();
     expect(screen.getByText(/eod desk/i)).toBeTruthy();
     expect(screen.getByText("NAV")).toBeTruthy();
     expect(screen.getByText("$50,000")).toBeTruthy();
-    expect(screen.getByText("$200,000")).toBeTruthy();
+    expect(screen.getAllByText(/\$\s*200,000/).length).toBeGreaterThan(0);
     expect(
       screen.getByRole("link", { name: /2 pending — review/i }).getAttribute("href"),
     ).toBe("/approvals");
@@ -44,8 +52,45 @@ describe("OverviewDashboard", () => {
     expect(screen.getByText("Awaiting approval")).toBeTruthy();
     expect(screen.getByText("AAPL")).toBeTruthy();
     expect(screen.getByText("MSFT")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /your nav/i })).toBeTruthy();
     expect(
-      screen.getByRole("img", { name: /nav history sparkline/i }),
+      screen.getByRole("img", { name: /nav history chart/i }),
+    ).toBeTruthy();
+  });
+
+  it("shows NAV history range controls with 1D selected by default", () => {
+    render(<OverviewDashboard data={fixture} />);
+
+    const range = screen.getByRole("group", { name: /nav history range/i });
+    expect(within(range).getByRole("button", { name: "1H" }).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+    expect(within(range).getByRole("button", { name: "1D" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(within(range).getByRole("button", { name: "1W" }).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+    expect(within(range).getByRole("button", { name: "1M" }).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+  });
+
+  it("switches NAV history range on click", async () => {
+    const user = userEvent.setup();
+    render(<OverviewDashboard data={fixture} />);
+
+    const range = screen.getByRole("group", { name: /nav history range/i });
+    await user.click(within(range).getByRole("button", { name: "1W" }));
+
+    expect(within(range).getByRole("button", { name: "1W" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(within(range).getByRole("button", { name: "1D" }).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+    expect(
+      screen.getByRole("img", { name: /nav history chart/i }),
     ).toBeTruthy();
   });
 });

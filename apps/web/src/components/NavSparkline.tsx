@@ -1,10 +1,10 @@
-import type { NavPoint } from "@/lib/types";
+import type { NavHistoryPoint } from "@/lib/mockNavHistory";
 
 const WIDTH = 240;
 const HEIGHT = 64;
 const PAD = 4;
 
-function buildPoints(series: NavPoint[]): string {
+function buildPoints(series: { nav: number }[]): string {
   if (series.length === 0) return "";
 
   const values = series.map((p) => p.nav);
@@ -26,7 +26,11 @@ function buildPoints(series: NavPoint[]): string {
     .join(" ");
 }
 
-export function NavSparkline({ series }: { series: NavPoint[] }) {
+export function NavSparkline({
+  series,
+}: {
+  series: NavHistoryPoint[] | { nav: number }[];
+}) {
   const points = buildPoints(series);
 
   return (

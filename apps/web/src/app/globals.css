@@ -181,6 +181,177 @@ textarea:focus-visible {
   font-weight: 600;
 }
 
+.panel__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.nav-portfolio {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 1rem 1.1rem 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 0.25rem;
+  background: var(--surface);
+}
+
+.nav-portfolio__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.nav-portfolio__title {
+  margin: 0;
+  font-family: var(--font-display), Georgia, serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.nav-portfolio__controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.nav-history-range {
+  display: inline-flex;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--ink) 4%, var(--surface));
+}
+
+.nav-history-range__btn {
+  padding: 0.3rem 0.55rem;
+  border: none;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.nav-history-range__btn:hover {
+  color: var(--ink);
+}
+
+.nav-history-range__btn.is-active,
+.nav-history-range__btn[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--rule);
+}
+
+.nav-portfolio__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.nav-portfolio__refresh:hover {
+  color: var(--ink);
+  border-color: var(--ledger);
+}
+
+.nav-portfolio__hero {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.nav-portfolio__value {
+  margin: 0;
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: clamp(1.6rem, 3vw, 2rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.nav-portfolio__change {
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 1.1rem;
+  color: var(--ink-muted);
+}
+
+.nav-portfolio__change--up {
+  color: var(--settle-plus);
+}
+
+.nav-portfolio__change--down {
+  color: var(--settle-minus);
+}
+
+.nav-portfolio__asof {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+.nav-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 0.25rem;
+}
+
+.nav-chart--empty {
+  min-height: 10rem;
+  display: grid;
+  place-items: center;
+}
+
+.nav-chart__grid {
+  stroke: var(--rule);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.85;
+}
+
+.nav-chart__ylabel,
+.nav-chart__xlabel {
+  fill: var(--ink-muted);
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 10px;
+}
+
+.nav-chart__line {
+  stroke: var(--ledger);
+  stroke-width: 2.25;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.nav-chart__fill-stop--top {
+  stop-color: var(--ledger);
+  stop-opacity: 0.28;
+}
+
+.nav-chart__fill-stop--bottom {
+  stop-color: var(--ledger);
+  stop-opacity: 0.02;
+}
+
 .alert {
   color: var(--settle-minus);
 }
@@ -378,6 +549,48 @@ textarea:focus-visible {
   color: var(--ink-muted);
 }
 
+.market-clock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1.25rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--ink) 3%, var(--paper));
+}
+
+.market-clock--open {
+  border-color: color-mix(in srgb, var(--settle-plus) 45%, var(--rule));
+}
+
+.market-clock__line {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: baseline;
+}
+
+.market-clock__label {
+  font-size: 0.8125rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.market-clock__time {
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 1rem;
+}
+
+.market-clock__status {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
 .run-status-badge {
   display: inline-block;
   padding: 0.125rem 0.5rem;
@@ -425,6 +638,8 @@ textarea:focus-visible {
   fill: var(--ink-muted);
   font-size: 10px;
 }
+
+/* legacy sparkline kept for any residual use; primary chart is .nav-chart */
 
 .portfolio {
   display: flex;

@@ -1,6 +1,9 @@
+"use client";
+
 import Link from "next/link";
-import { NavSparkline } from "@/components/NavSparkline";
+import { NavHistoryPanel } from "@/components/NavHistoryPanel";
 import { RunStatusBadge } from "@/components/RunStatusBadge";
+import { UsMarketClock } from "@/components/UsMarketClock";
 import type { OverviewResponse } from "@/lib/types";
 
 const currency = new Intl.NumberFormat("en-US", {
@@ -15,13 +18,37 @@ const percent = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-export function OverviewDashboard({ data }: { data: OverviewResponse }) {
+export function OverviewDashboard({
+  data,
+  onRefresh,
+  refreshing = false,
+}: {
+  data: OverviewResponse;
+  onRefresh?: () => void;
+  refreshing?: boolean;
+}) {
   return (
     <div className="overview">
       <header className="page-header">
         <p className="page-header__eyebrow">EOD desk</p>
-        <h1 className="page-header__title">Overview</h1>
+        <div className="runs__header">
+          <h1 className="page-header__title">Overview</h1>
+          {onRefresh ? (
+            <div className="runs__actions">
+              <button
+                type="button"
+                className="btn"
+                onClick={onRefresh}
+                disabled={refreshing}
+              >
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+          ) : null}
+        </div>
       </header>
+
+      <UsMarketClock />
 
       <section className="stat-grid" aria-label="Account summary">
         <div className="stat stat--emphasis">
@@ -74,40 +101,35 @@ export function OverviewDashboard({ data }: { data: OverviewResponse }) {
         )}
       </section>
 
-      <div className="overview__split">
-        <section className="panel">
-          <h2 className="panel__title">Positions</h2>
-          {data.positions_summary.length === 0 ? (
-            <p className="empty-state">No open positions</p>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th scope="col">Symbol</th>
-                  <th scope="col">Qty</th>
-                  <th scope="col">Market value</th>
-                  <th scope="col">Weight</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.positions_summary.map((row) => (
-                  <tr key={row.symbol}>
-                    <td>{row.symbol}</td>
-                    <td>{row.qty}</td>
-                    <td>{currency.format(row.market_value)}</td>
-                    <td>{percent.format(row.weight)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
+      <NavHistoryPanel anchorNav={data.nav} />
 
-        <section className="panel">
-          <h2 className="panel__title">NAV history</h2>
-          <NavSparkline series={data.nav_series} />
-        </section>
-      </div>
+      <section className="panel">
+        <h2 className="panel__title">Positions</h2>
+        {data.positions_summary.length === 0 ? (
+          <p className="empty-state">No open positions</p>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Symbol</th>
+                <th scope="col">Qty</th>
+                <th scope="col">Market value</th>
+                <th scope="col">Weight</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.positions_summary.map((row) => (
+                <tr key={row.symbol}>
+                  <td>{row.symbol}</td>
+                  <td>{row.qty}</td>
+                  <td>{currency.format(row.market_value)}</td>
+                  <td>{percent.format(row.weight)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
     </div>
   );
 }
