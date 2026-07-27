@@ -67,15 +67,15 @@ export default function PortfolioPage() {
   }, []);
 
   if (loading) {
-    return <p>Loading portfolio…</p>;
+    return <p className="empty-state">Loading portfolio…</p>;
   }
 
   if (error) {
-    return <p role="alert">{error}</p>;
+    return <p className="alert" role="alert">{error}</p>;
   }
 
   if (!data) {
-    return <p role="alert">Portfolio data unavailable</p>;
+    return <p className="alert" role="alert">Portfolio data unavailable</p>;
   }
 
   const equity = data.positions.reduce(
@@ -86,35 +86,38 @@ export default function PortfolioPage() {
 
   return (
     <div className="portfolio">
-      <h1 className="portfolio__title">Portfolio</h1>
+      <header className="page-header">
+        <p className="page-header__eyebrow">EOD desk</p>
+        <h1 className="page-header__title">Portfolio</h1>
+      </header>
 
-      <section className="portfolio__stats" aria-label="Account summary">
-        <div className="portfolio__stat">
-          <span className="portfolio__stat-label">Cash</span>
-          <span className="portfolio__stat-value">
+      <section className="stat-grid" aria-label="Account summary">
+        <div className="stat">
+          <span className="stat__label">Cash</span>
+          <span className="stat__value">
             {currencyWhole.format(data.cash)}
           </span>
         </div>
-        <div className="portfolio__stat">
-          <span className="portfolio__stat-label">Equity</span>
-          <span className="portfolio__stat-value">
+        <div className="stat">
+          <span className="stat__label">Equity</span>
+          <span className="stat__value">
             {currencyWhole.format(equity)}
           </span>
         </div>
-        <div className="portfolio__stat">
-          <span className="portfolio__stat-label">NAV</span>
-          <span className="portfolio__stat-value">
+        <div className="stat stat--emphasis">
+          <span className="stat__label">NAV</span>
+          <span className="stat__value">
             {currencyWhole.format(nav)}
           </span>
         </div>
       </section>
 
-      <section className="portfolio__panel">
-        <h2 className="portfolio__panel-title">Positions</h2>
+      <section className="panel">
+        <h2 className="panel__title">Positions</h2>
         {data.positions.length === 0 ? (
-          <p>No open positions</p>
+          <p className="empty-state">No open positions</p>
         ) : (
-          <table className="portfolio__table">
+          <table className="data-table">
             <thead>
               <tr>
                 <th scope="col">Symbol</th>

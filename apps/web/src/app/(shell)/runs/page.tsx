@@ -69,31 +69,43 @@ export default function RunsPage() {
   }
 
   if (loading) {
-    return <p>Loading runs…</p>;
+    return <p className="empty-state">Loading runs…</p>;
   }
 
   return (
     <div className="runs">
-      <div className="runs__header">
-        <h1 className="runs__title">Runs</h1>
-        <div className="runs__actions">
-          <button type="button" disabled={eodLoading} onClick={() => void handleRunEod()}>
-            {eodLoading ? "Starting…" : "Run EOD now"}
-          </button>
-          <button type="button" onClick={() => void handleRefresh()}>
-            Refresh
-          </button>
+      <header className="page-header">
+        <p className="page-header__eyebrow">EOD desk</p>
+        <div className="runs__header">
+          <h1 className="page-header__title">Runs</h1>
+          <div className="runs__actions">
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={eodLoading}
+              onClick={() => void handleRunEod()}
+            >
+              {eodLoading ? "Starting…" : "Run EOD now"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void handleRefresh()}
+            >
+              Refresh
+            </button>
+          </div>
         </div>
-      </div>
+      </header>
 
-      {error ? <p role="alert">{error}</p> : null}
-      {eodError ? <p role="alert">{eodError}</p> : null}
+      {error ? <p className="alert" role="alert">{error}</p> : null}
+      {eodError ? <p className="alert" role="alert">{eodError}</p> : null}
 
-      <section className="runs__panel">
+      <section className="panel">
         {runs.length === 0 ? (
-          <p>No runs yet</p>
+          <p className="empty-state">No runs yet</p>
         ) : (
-          <table className="runs__table">
+          <table className="data-table">
             <thead>
               <tr>
                 <th scope="col">Run</th>

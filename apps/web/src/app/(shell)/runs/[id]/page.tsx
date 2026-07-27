@@ -80,15 +80,15 @@ export default function RunDetailPage() {
   }, [runId]);
 
   if (loading) {
-    return <p>Loading run…</p>;
+    return <p className="empty-state">Loading run…</p>;
   }
 
   if (error) {
-    return <p role="alert">{error}</p>;
+    return <p className="alert" role="alert">{error}</p>;
   }
 
   if (!data) {
-    return <p role="alert">Run data unavailable</p>;
+    return <p className="alert" role="alert">Run data unavailable</p>;
   }
 
   return (
@@ -97,18 +97,19 @@ export default function RunDetailPage() {
         <Link href="/runs">← All runs</Link>
       </p>
 
-      <header className="runs__detail-header">
-        <h1 className="runs__title">Run #{data.id}</h1>
+      <header className="page-header">
+        <p className="page-header__eyebrow">EOD desk</p>
+        <h1 className="page-header__title">Run #{data.id}</h1>
         <p className="runs__meta">
           <span>{data.trade_date}</span>
           <RunStatusBadge status={data.status} />
         </p>
       </header>
 
-      <section className="runs__panel" aria-label="Workflow steps">
-        <h2 className="runs__panel-title">Steps</h2>
+      <section className="panel" aria-label="Workflow steps">
+        <h2 className="panel__title">Steps</h2>
         {data.steps.length === 0 ? (
-          <p>No steps recorded</p>
+          <p className="empty-state">No steps recorded</p>
         ) : (
           <ol className="runs__timeline">
             {data.steps.map((step: WorkflowStep) => (
@@ -121,12 +122,12 @@ export default function RunDetailPage() {
         )}
       </section>
 
-      <section className="runs__panel" aria-label="Trade proposals">
-        <h2 className="runs__panel-title">Proposals</h2>
+      <section className="panel" aria-label="Trade proposals">
+        <h2 className="panel__title">Proposals</h2>
         {data.proposals.length === 0 ? (
-          <p>No proposals</p>
+          <p className="empty-state">No proposals</p>
         ) : (
-          <table className="runs__table">
+          <table className="data-table">
             <thead>
               <tr>
                 <th scope="col">Symbol</th>
@@ -155,12 +156,12 @@ export default function RunDetailPage() {
         )}
       </section>
 
-      <section className="runs__panel" aria-label="Orders">
-        <h2 className="runs__panel-title">Orders</h2>
+      <section className="panel" aria-label="Orders">
+        <h2 className="panel__title">Orders</h2>
         {data.orders.length === 0 ? (
-          <p>No orders</p>
+          <p className="empty-state">No orders</p>
         ) : (
-          <table className="runs__table">
+          <table className="data-table">
             <thead>
               <tr>
                 <th scope="col">Symbol</th>

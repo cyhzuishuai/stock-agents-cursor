@@ -45,15 +45,15 @@ export default function SettingsPage() {
   }, []);
 
   if (loading) {
-    return <p>Loading settings…</p>;
+    return <p className="empty-state">Loading settings…</p>;
   }
 
   if (error) {
-    return <p role="alert">{error}</p>;
+    return <p className="alert" role="alert">{error}</p>;
   }
 
   if (!data) {
-    return <p role="alert">Settings unavailable</p>;
+    return <p className="alert" role="alert">Settings unavailable</p>;
   }
 
   const riskEntries = Object.entries(data.risk_rules).sort(([a], [b]) =>
@@ -61,59 +61,64 @@ export default function SettingsPage() {
   );
 
   return (
-    <div className="runs">
-      <h1 className="runs__title">Settings</h1>
+    <div className="settings">
+      <header className="page-header">
+        <p className="page-header__eyebrow">EOD desk</p>
+        <h1 className="page-header__title">Settings</h1>
+      </header>
 
-      <section className="runs__panel">
-        <h2 className="runs__panel-title">Market data provider</h2>
-        <p>{data.market_data_provider || "—"}</p>
-      </section>
+      <div className="settings__sections">
+        <section className="panel">
+          <h2 className="panel__title">Market data provider</h2>
+          <p>{data.market_data_provider || "—"}</p>
+        </section>
 
-      <section className="runs__panel">
-        <h2 className="runs__panel-title">Watchlist</h2>
-        {data.watchlist.length === 0 ? (
-          <p>No symbols configured</p>
-        ) : (
-          <table className="runs__table">
-            <thead>
-              <tr>
-                <th scope="col">Symbol</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.watchlist.map((symbol) => (
-                <tr key={symbol}>
-                  <td>{symbol}</td>
+        <section className="panel">
+          <h2 className="panel__title">Watchlist</h2>
+          {data.watchlist.length === 0 ? (
+            <p className="empty-state">No symbols configured</p>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Symbol</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+              </thead>
+              <tbody>
+                {data.watchlist.map((symbol) => (
+                  <tr key={symbol}>
+                    <td>{symbol}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
 
-      <section className="runs__panel">
-        <h2 className="runs__panel-title">Risk rules</h2>
-        {riskEntries.length === 0 ? (
-          <p>No risk rules configured</p>
-        ) : (
-          <table className="runs__table">
-            <thead>
-              <tr>
-                <th scope="col">Rule</th>
-                <th scope="col">Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {riskEntries.map(([key, value]) => (
-                <tr key={key}>
-                  <td>{key}</td>
-                  <td>{formatRiskValue(value)}</td>
+        <section className="panel">
+          <h2 className="panel__title">Risk rules</h2>
+          {riskEntries.length === 0 ? (
+            <p className="empty-state">No risk rules configured</p>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Rule</th>
+                  <th scope="col">Value</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+              </thead>
+              <tbody>
+                {riskEntries.map(([key, value]) => (
+                  <tr key={key}>
+                    <td>{key}</td>
+                    <td>{formatRiskValue(value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

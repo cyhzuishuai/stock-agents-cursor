@@ -73,27 +73,36 @@ export default function ApprovalsPage() {
   }
 
   if (loading) {
-    return <p>Loading approvals…</p>;
+    return <p className="empty-state">Loading approvals…</p>;
   }
 
   return (
     <div className="runs">
-      <div className="runs__header">
-        <h1 className="runs__title">Approvals</h1>
-        <div className="runs__actions">
-          <button type="button" onClick={() => void loadApprovals()}>
-            Refresh
-          </button>
+      <header className="page-header">
+        <p className="page-header__eyebrow">EOD desk</p>
+        <div className="runs__header">
+          <h1 className="page-header__title">Approvals</h1>
+          <div className="runs__actions">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void loadApprovals()}
+            >
+              Refresh
+            </button>
+          </div>
         </div>
-      </div>
+      </header>
 
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? <p className="alert" role="alert">{error}</p> : null}
 
-      <section className="runs__panel">
+      <section className="panel">
         {approvals.length === 0 ? (
-          <p>No pending approvals</p>
+          <p className="empty-state">
+            No pending approvals. Wait for the next EOD run.
+          </p>
         ) : (
-          <table className="runs__table">
+          <table className="data-table">
             <thead>
               <tr>
                 <th scope="col">Symbol</th>
@@ -135,6 +144,7 @@ export default function ApprovalsPage() {
                       <div className="runs__actions">
                         <button
                           type="button"
+                          className="btn btn--primary"
                           disabled={busy}
                           onClick={() => void handleDecide(item.id, "approved")}
                         >
@@ -142,6 +152,7 @@ export default function ApprovalsPage() {
                         </button>
                         <button
                           type="button"
+                          className="btn btn--danger"
                           disabled={busy}
                           onClick={() => void handleDecide(item.id, "rejected")}
                         >
