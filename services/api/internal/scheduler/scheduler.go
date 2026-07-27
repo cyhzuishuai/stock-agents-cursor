@@ -140,13 +140,7 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 		}
 	}
 
-	if s.cron != nil {
-		stopCtx := s.cron.Stop()
-		<-stopCtx.Done()
-		s.cron = nil
-	}
-
-	c := cron.New(cron.WithLocation(s.loc))
+	newCron := cron.New(cron.WithLocation(s.loc))
 	if strat == nil {
 		fmt.Fprintf(os.Stderr, "scheduler: no active strategy; registering no jobs\n")
 	} else {
@@ -155,15 +149,20 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 		for _, job := range jobs {
 			trigger := job.Trigger
 			expr := job.CronExpr
-			if _, err := c.AddFunc(expr, func() {
+			if _, err := newCron.AddFunc(expr, func() {
 				s.runJob(context.Background(), id, trigger, mode)
 			}); err != nil {
 				return fmt.Errorf("scheduler: add cron %q: %w", expr, err)
 			}
 		}
 	}
-	s.cron = c
-	c.Start()
+
+	if s.cron != nil {
+		stopCtx := s.cron.Stop()
+		<-stopCtx.Done()
+	}
+	s.cron = newCron
+	newCron.Start()
 	return nil
 }
 

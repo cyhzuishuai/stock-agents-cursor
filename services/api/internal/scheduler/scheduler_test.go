@@ -186,6 +186,39 @@ func TestReloadReplacesJobs(t *testing.T) {
 	}
 }
 
+func TestReloadFailurePreservesJobCount(t *testing.T) {
+	loc := mustNY(t)
+	runner := &recordingRunner{}
+	src := &fakeSource{strat: defaultStrategy(1)}
+
+	s, err := scheduler.New(scheduler.Options{
+		Runner:   runner,
+		Location: loc,
+		Source:   src,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err := s.Reload(context.Background()); err != nil {
+		t.Fatalf("Reload #1: %v", err)
+	}
+	before := s.JobCount()
+	if before < 7 {
+		t.Fatalf("JobCount before failure: got %d want >= 7", before)
+	}
+
+	bad := defaultStrategy(2)
+	bad.IntradayStartET = "not-a-time"
+	src.set(bad)
+	if err := s.Reload(context.Background()); err == nil {
+		t.Fatal("Reload #2: expected error from invalid strategy")
+	}
+	if got := s.JobCount(); got != before {
+		t.Fatalf("JobCount after failed reload: got %d want %d (old schedule preserved)", got, before)
+	}
+}
+
 func TestReloadNoActiveStrategyRegistersNoJobs(t *testing.T) {
 	loc := mustNY(t)
 	runner := &recordingRunner{}
