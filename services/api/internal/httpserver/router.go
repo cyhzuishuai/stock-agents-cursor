@@ -58,6 +58,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		{
 			authed.GET("/overview", api.Overview)
 			authed.GET("/portfolio", api.Portfolio)
+			authed.GET("/orders", api.ListOrders)
 			authed.GET("/runs", api.ListRuns)
 			authed.POST("/runs/eod", api.PostEOD)
 			authed.GET("/runs/:id", api.GetRun)
