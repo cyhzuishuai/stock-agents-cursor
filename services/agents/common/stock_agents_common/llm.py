@@ -50,8 +50,8 @@ class LLMClient:
         if not api_key:
             raise ValueError("LLM_API_KEY is required when LLM_MODE is not mock")
 
-        base_url = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
-        model = os.environ.get("LLM_MODEL", "gpt-4o-mini").strip()
+        base_url = (os.environ.get("LLM_BASE_URL") or "https://api.openai.com/v1").strip().rstrip("/")
+        model = (os.environ.get("LLM_MODEL") or "gpt-4o-mini").strip()
 
         payload = {
             "model": model,
