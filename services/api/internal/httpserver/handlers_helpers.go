@@ -101,11 +101,23 @@ func (h *API) triggerEOD(c *gin.Context, tradeDate string, force bool) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "eod runner not configured"})
 		return
 	}
-	runID, err := h.Runner.RunEOD(c.Request.Context(), workflow.RunParams{
+	params := workflow.RunParams{
 		TradeDate: tradeDate,
 		Force:     force,
 		Trigger:   workflow.TriggerManual,
-	})
+	}
+	if h.Strategies != nil {
+		st, err := h.Strategies.Active(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if st != nil {
+			params.StrategyID = &st.ID
+			// ExecutionMode left empty so runner resolves from strategy row.
+		}
+	}
+	runID, err := h.Runner.RunEOD(c.Request.Context(), params)
 	if err != nil {
 		resp := gin.H{"error": err.Error()}
 		if runID != 0 {

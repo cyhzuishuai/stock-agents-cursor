@@ -24,13 +24,13 @@ import (
 )
 
 type stubRunner struct {
-	lastTradeDate string
-	runID         uint
-	err           error
+	lastParams workflow.RunParams
+	runID      uint
+	err        error
 }
 
 func (s *stubRunner) RunEOD(_ context.Context, params workflow.RunParams) (uint, error) {
-	s.lastTradeDate = params.TradeDate
+	s.lastParams = params
 	if s.runID == 0 {
 		s.runID = 42
 	}
@@ -335,8 +335,21 @@ func TestRunsDetailAndEODAndCancel(t *testing.T) {
 		if uint(resp["run_id"].(float64)) != 99 {
 			t.Fatalf("run_id: got %v want 99", resp["run_id"])
 		}
-		if runner.lastTradeDate != "2026-07-24" {
-			t.Fatalf("trade_date: got %q", runner.lastTradeDate)
+		if runner.lastParams.TradeDate != "2026-07-24" {
+			t.Fatalf("trade_date: got %q", runner.lastParams.TradeDate)
+		}
+		if runner.lastParams.Trigger != workflow.TriggerManual {
+			t.Fatalf("trigger: got %q want %s", runner.lastParams.Trigger, workflow.TriggerManual)
+		}
+		if runner.lastParams.ExecutionMode != "" {
+			t.Fatalf("execution_mode: got %q want empty (runner resolves from DB)", runner.lastParams.ExecutionMode)
+		}
+		var active models.Strategy
+		if err := gormDB.Where("is_active = ?", true).First(&active).Error; err != nil {
+			t.Fatalf("active strategy: %v", err)
+		}
+		if runner.lastParams.StrategyID == nil || *runner.lastParams.StrategyID != active.ID {
+			t.Fatalf("strategy_id: got %v want %d", runner.lastParams.StrategyID, active.ID)
 		}
 	})
 
@@ -489,8 +502,11 @@ func TestInternalEODRequiresToken(t *testing.T) {
 		if uint(resp["run_id"].(float64)) != 99 {
 			t.Fatalf("run_id: got %v", resp["run_id"])
 		}
-		if runner.lastTradeDate != "2026-07-23" {
-			t.Fatalf("trade_date: got %q", runner.lastTradeDate)
+		if runner.lastParams.TradeDate != "2026-07-23" {
+			t.Fatalf("trade_date: got %q", runner.lastParams.TradeDate)
+		}
+		if runner.lastParams.Trigger != workflow.TriggerManual {
+			t.Fatalf("trigger: got %q want %s", runner.lastParams.Trigger, workflow.TriggerManual)
 		}
 	})
 }

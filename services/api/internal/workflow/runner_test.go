@@ -303,6 +303,59 @@ func TestRunEODUnderstatedNotionalStillBreachesMaxOrder(t *testing.T) {
 	}
 }
 
+func TestRunEODResolvesExecutionModeFromStrategyDB(t *testing.T) {
+	env := setupRunnerEnv(t, stubResponses{
+		data:      dataBarsJSON(191),
+		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
+		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000
+		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"review"}],"warnings":[]}`,
+	})
+
+	st := models.Strategy{
+		Name:          "auto-reject-test",
+		IsActive:      true,
+		ExecutionMode: workflow.ExecutionModeAutoReject,
+	}
+	if err := env.db.Create(&st).Error; err != nil {
+		t.Fatalf("create strategy: %v", err)
+	}
+
+	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+		TradeDate:  tradeDate,
+		StrategyID: &st.ID,
+		Trigger:    workflow.TriggerManual,
+		// ExecutionMode intentionally empty — runner must load from DB.
+	})
+	if err != nil {
+		t.Fatalf("RunEOD: %v", err)
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusExecuted {
+		t.Fatalf("run status: got %q want executed", run.Status)
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 1 || proposals[0].Status != workflow.ProposalRejected {
+		t.Fatalf("proposal: %+v", proposals)
+	}
+
+	var approvals int64
+	if err := env.db.Model(&models.Approval{}).Count(&approvals).Error; err != nil {
+		t.Fatalf("approvals count: %v", err)
+	}
+	if approvals != 0 {
+		t.Fatalf("approvals: got %d want 0", approvals)
+	}
+}
+
 func TestRunEODAutoRejectBreachesRejectsProposalNoApproval(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		data:      dataBarsJSON(191),
