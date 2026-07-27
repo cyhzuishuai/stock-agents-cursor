@@ -152,6 +152,8 @@ Evaluation:
 
 ## 6. Paper ledger
 
+> **Superseded (cash / positions / orders authority):** Phase 1 shipped under `docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`. Alpaca Paper is now the system of record for account cash, positions, orders, and fill prices; Go submits market orders instead of local `ApplyFill`. The sections below describe the original V1 local-ledger model retained for historical context and offline/mocked-broker tests.
+
 ### 6.1 Accounting rules
 
 - Currency: USD.
