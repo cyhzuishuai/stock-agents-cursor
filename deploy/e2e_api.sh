@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # API E2E against a running Compose stack (real Postgres/Redis/API/agents).
-# Uses LLM_MODE=mock via override — not production brokers or paid LLMs.
-# Prerequisites: docker compose up (healthy), then: ./deploy/e2e_api.sh
+# Uses LLM_MODE=mock via override for LLM agents.
+# Requires ALPACA_API_KEY/SECRET in deploy/.env — Overview/Portfolio/Orders
+# and EOD submits read/write Alpaca Paper (not the local ledger).
+# Prerequisites: docker compose up --build (healthy), then: ./deploy/e2e_api.sh
 set -euo pipefail
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8080}"
@@ -55,16 +57,28 @@ TOKEN="$(printf '%s' "$login_body" | python3 -c "import json,sys; print(json.loa
 
 auth() { curl -fsS --max-time "${2:-30}" -H "Authorization: Bearer ${TOKEN}" "$@"; }
 
-overview="$(auth "${API_BASE_URL}/api/v1/overview")"
-printf '%s' "$overview" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'cash' in d and 'equity' in d"
-assert_true 1 "GET /overview has cash/equity"
+if ! overview="$(auth "${API_BASE_URL}/api/v1/overview" 2>/tmp/e2e_overview.err)"; then
+  if grep -qi "alpaca not configured\|503" /tmp/e2e_overview.err 2>/dev/null; then
+    log "FAIL  GET /overview — set ALPACA_API_KEY/SECRET in deploy/.env and recreate api"
+  fi
+  assert_true 0 "GET /overview has cash/equity/nav (Alpaca)"
+fi
+printf '%s' "$overview" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'cash' in d and 'equity' in d and 'nav' in d"
+assert_true 1 "GET /overview has cash/equity/nav (Alpaca)"
 
 portfolio="$(auth "${API_BASE_URL}/api/v1/portfolio")"
 printf '%s' "$portfolio" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'cash' in d and 'positions' in d"
-assert_true 1 "GET /portfolio has cash/positions"
+assert_true 1 "GET /portfolio has cash/positions (Alpaca)"
+
+orders="$(auth "${API_BASE_URL}/api/v1/orders")"
+printf '%s' "$orders" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'orders' in d and isinstance(d['orders'], list)"
+assert_true 1 "GET /orders has orders array (Alpaca)"
 
 auth "${API_BASE_URL}/api/v1/runs" >/dev/null
 assert_true 1 "GET /runs returns list"
+
+auth "${API_BASE_URL}/api/v1/strategies" >/dev/null
+assert_true 1 "GET /strategies returns list"
 
 TRADE_DATE="${EOD_TRADE_DATE:-$(python3 -c 'from datetime import date,timedelta; import random; print((date.today()-timedelta(days=random.randint(3,40))).isoformat())')}"
 log "POST /runs/eod trade_date=${TRADE_DATE}"
@@ -95,6 +109,17 @@ assert_true 1 "GET /approvals?status=pending ok"
 settings="$(auth "${API_BASE_URL}/api/v1/settings")"
 printf '%s' "$settings" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'watchlist' in d and 'risk_rules' in d"
 assert_true 1 "GET /settings has watchlist/risk_rules"
+
+# Stream: 503 when ALPACA_STREAM_ENABLED=false is expected; 200 when enabled.
+stream_code="$(curl -sS -o /tmp/e2e_stream.body -w "%{http_code}" --max-time 5 \
+  -H "Authorization: Bearer ${TOKEN}" "${API_BASE_URL}/api/v1/stream/market" || true)"
+if [[ "$stream_code" == "200" ]]; then
+  assert_true 1 "GET /stream/market returns 200 when enabled"
+elif [[ "$stream_code" == "503" ]]; then
+  assert_true 1 "GET /stream/market returns 503 when streaming disabled"
+else
+  assert_true 0 "GET /stream/market returns 200 or 503 (got ${stream_code})"
+fi
 
 log "passed=${PASSED} failed=${FAILED}"
 log "e2e passed"

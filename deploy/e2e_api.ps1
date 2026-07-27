@@ -1,6 +1,8 @@
 # API E2E against a running Compose stack (real Postgres/Redis/API/agents).
-# Uses LLM_MODE=mock via override — not production brokers or paid LLMs.
-# Prerequisites: docker compose up (healthy), then:
+# Uses LLM_MODE=mock via override for LLM agents.
+# Requires ALPACA_API_KEY/SECRET in deploy/.env — Overview/Portfolio/Orders
+# and EOD submits read/write Alpaca Paper (not the local ledger).
+# Prerequisites: docker compose up --build (healthy), then:
 #   powershell -File deploy/e2e_api.ps1
 $ErrorActionPreference = "Stop"
 
@@ -67,16 +69,31 @@ try {
     Wait-Healthz
     $token = Get-AuthToken
 
-    $overview = Invoke-Authed -Method Get -Path "/api/v1/overview" -Token $token
-    Assert-True ($null -ne $overview.cash) "GET /overview has cash"
-    Assert-True ($null -ne $overview.equity) "GET /overview has equity"
+    try {
+        $overview = Invoke-Authed -Method Get -Path "/api/v1/overview" -Token $token
+    } catch {
+        $msg = $_.Exception.Message
+        if ($msg -match "503|alpaca not configured") {
+            throw "GET /overview returned alpaca not configured — set ALPACA_API_KEY/SECRET in deploy/.env and recreate api"
+        }
+        throw
+    }
+    Assert-True ($null -ne $overview.cash) "GET /overview has cash (Alpaca)"
+    Assert-True ($null -ne $overview.equity) "GET /overview has equity (Alpaca)"
+    Assert-True ($null -ne $overview.nav) "GET /overview has nav (Alpaca)"
 
     $portfolio = Invoke-Authed -Method Get -Path "/api/v1/portfolio" -Token $token
-    Assert-True ($null -ne $portfolio.cash) "GET /portfolio has cash"
-    Assert-True ($null -ne $portfolio.positions) "GET /portfolio has positions"
+    Assert-True ($null -ne $portfolio.cash) "GET /portfolio has cash (Alpaca)"
+    Assert-True ($null -ne $portfolio.positions) "GET /portfolio has positions (Alpaca)"
+
+    $orders = Invoke-Authed -Method Get -Path "/api/v1/orders" -Token $token
+    Assert-True ($null -ne $orders.orders) "GET /orders has orders array (Alpaca)"
 
     $runsBefore = Invoke-Authed -Method Get -Path "/api/v1/runs" -Token $token
     Assert-True ($null -ne $runsBefore) "GET /runs returns list"
+
+    $strategies = Invoke-Authed -Method Get -Path "/api/v1/strategies" -Token $token
+    Assert-True ($null -ne $strategies) "GET /strategies returns list"
 
     # Unique trade_date so re-runs hit a real EOD path (API rejects duplicate dates with 500).
     $tradeDate = if ($env:EOD_TRADE_DATE) {
@@ -112,6 +129,18 @@ try {
     $settings = Invoke-Authed -Method Get -Path "/api/v1/settings" -Token $token
     Assert-True ($null -ne $settings.watchlist) "GET /settings has watchlist"
     Assert-True ($null -ne $settings.risk_rules) "GET /settings has risk_rules"
+
+    # Stream: 503 when ALPACA_STREAM_ENABLED=false is OK; 401 without token already covered by middleware.
+    try {
+        $headers = @{ Authorization = "Bearer $token" }
+        $streamResp = Invoke-WebRequest -Uri "$ApiBase/api/v1/stream/market" -Headers $headers `
+            -Method Get -TimeoutSec 5 -ErrorAction Stop
+        Assert-True ($streamResp.StatusCode -eq 200) "GET /stream/market returns 200 when enabled"
+    } catch {
+        $code = $null
+        if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+        Assert-True ($code -eq 503) "GET /stream/market returns 503 when streaming disabled (got $code)"
+    }
 
     Write-E2E "passed=$script:Passed failed=$script:Failed"
     Write-E2E "e2e passed"

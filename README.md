@@ -28,6 +28,7 @@ cp deploy/env.example deploy/.env
 | `ALPACA_BASE_URL` | 默认 `https://paper-api.alpaca.markets` |
 | `ALPACA_DATA_BASE_URL` | 默认 `https://data.alpaca.markets` |
 | `MARKET_DATA_PROVIDER` | 默认 `alpaca`；无密钥时可设 `free`（Yahoo）作开发回退 |
+| `ALPACA_STREAM_ENABLED` | 默认 `false`（E2E 期望 stream 返回 503）；`true` 时开 JWT SSE（需密钥） |
 | `INTERNAL_EOD_TOKEN` | 内部触发 EOD 的 token |
 
 `deploy/env.example` 是可入库模板；`deploy/.env` 已被根目录 `.gitignore` 忽略，勿提交。
@@ -59,7 +60,9 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.override.ym
 默认登录：`admin` / `admin123`（以你的 `.env` 为准）
 
 EOD 冒烟：`.\deploy\smoke_eod.ps1` 或 `./deploy/smoke_eod.sh`  
-API E2E（需先 `docker compose up`）：`.\deploy\e2e_api.ps1` 或 `./deploy/e2e_api.sh`
+API E2E（需先 `docker compose up --build`，且 `.env` 中配置 Alpaca Paper 密钥）：`.\deploy\e2e_api.ps1` 或 `./deploy/e2e_api.sh`  
+
+E2E 覆盖：Alpaca overview / portfolio / orders、strategies、EOD 终态、approvals、settings、stream（未开流式时期望 503）。本地最近一次：`e2e_api.ps1` **17/17 PASS**（2026-07-28）。详情见 `deploy/README.md`。
 
 ## 仓库结构（简要）
 

@@ -188,6 +188,7 @@ Deploy templates and README must document Paper-only intent. Compose override mu
 
 - Stream hub unit tests with fake upstream; handler auth tests.
 - Optional manual smoke with Paper keys.
+- **Live Compose E2E (2026-07-28):** `deploy/e2e_api.ps1` — 17/17 PASS with Paper keys (`MARKET_DATA_PROVIDER=alpaca`, stream disabled → 503; EOD terminal `executed`). See `deploy/README.md`.
 
 ## 9. Docs to update (with implementation)
 
