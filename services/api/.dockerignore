@@ -1,0 +1,4 @@
+api.exe
+*.exe
+.git
+**/*_test.go

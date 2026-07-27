@@ -1,4 +1,4 @@
-# Multi-stage Next.js production image (build context: apps/web)
+# Multi-stage Next.js standalone image (build context: apps/web)
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./

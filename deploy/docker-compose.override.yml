@@ -1,0 +1,50 @@
+# Local/dev overrides: published ports + mock LLM.
+# Auto-merged when using compose files under deploy/.
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  api:
+    ports:
+      - "8080:8080"
+
+  web:
+    ports:
+      - "3000:3000"
+
+  agent-data:
+    ports:
+      - "8001:8001"
+    environment:
+      LLM_MODE: mock
+      MARKET_DATA_PROVIDER: free
+
+  agent-research:
+    ports:
+      - "8002:8002"
+    environment:
+      LLM_MODE: mock
+
+  agent-decision:
+    ports:
+      - "8003:8003"
+    environment:
+      LLM_MODE: mock
+
+  agent-portfolio:
+    ports:
+      - "8004:8004"
+    environment:
+      LLM_MODE: mock
+
+  agent-risk:
+    ports:
+      - "8005:8005"
+    environment:
+      LLM_MODE: mock
