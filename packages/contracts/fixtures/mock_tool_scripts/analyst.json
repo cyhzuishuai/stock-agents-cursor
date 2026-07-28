@@ -1,4 +1,15 @@
 {
+  "plan": {
+    "steps": [
+      {"id": "s1", "title": "Account view", "status": "pending", "tool_hint": "get_account_view"},
+      {"id": "s2", "title": "Daily bars", "status": "pending", "tool_hint": "get_daily_bars"}
+    ]
+  },
+  "reflect": [
+    {"decision": "mark_step_done", "step_id": "s1", "reason": "account loaded"},
+    {"decision": "mark_step_done", "step_id": "s2", "reason": "bars loaded"},
+    {"decision": "finalize", "reason": "enough evidence"}
+  ],
   "rounds": [
     {
       "tool_calls": [

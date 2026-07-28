@@ -22,6 +22,31 @@ def _clear_llm_env(monkeypatch):
     monkeypatch.delenv("MOCK_TOOL_SCRIPT", raising=False)
 
 
+def test_mock_complete_plan_and_reflect_do_not_consume_tool_rounds(monkeypatch, tmp_path):
+    monkeypatch.setenv("LLM_MODE", "mock")
+    script = {
+        "plan": {"steps": [{"id": "s1", "title": "Bars", "status": "pending"}]},
+        "reflect": [
+            {"decision": "mark_step_done", "step_id": "s1", "reason": "ok"},
+            {"decision": "finalize", "reason": "done"},
+        ],
+        "rounds": [{"tool_calls": [{"id": "1", "name": "get_news", "args": {"symbol": "AAPL"}}]}],
+    }
+    path = tmp_path / "script.json"
+    path.write_text(json.dumps(script), encoding="utf-8")
+    monkeypatch.setenv("MOCK_TOOL_SCRIPT", str(path))
+
+    client = ToolLLMClient()
+    plan = client.complete_plan("sys", "user")
+    assert plan["plan_steps"][0]["id"] == "s1"
+    tools = client.complete_tools("sys", [{"role": "user", "content": "x"}], [])
+    assert tools["tool_calls"][0]["name"] == "get_news"
+    r1 = client.complete_reflect("sys", [])
+    assert r1["reflect"]["decision"] == "mark_step_done"
+    r2 = client.complete_reflect("sys", [])
+    assert r2["reflect"]["decision"] == "finalize"
+
+
 def test_mock_mode_returns_tool_calls_then_final_json(monkeypatch):
     monkeypatch.setenv("LLM_MODE", "mock")
     monkeypatch.setenv("MOCK_TOOL_SCRIPT", str(ANALYST_SCRIPT))

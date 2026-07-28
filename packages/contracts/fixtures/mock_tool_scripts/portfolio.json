@@ -1,4 +1,17 @@
 {
+  "plan": {
+    "steps": [
+      {"id": "s1", "title": "Account view", "status": "pending", "tool_hint": "get_account_view"},
+      {"id": "s2", "title": "Risk context", "status": "pending", "tool_hint": "get_risk_context"},
+      {"id": "s3", "title": "Size proposals", "status": "pending", "tool_hint": "size_proposals"}
+    ]
+  },
+  "reflect": [
+    {"decision": "mark_step_done", "step_id": "s1", "reason": "account loaded"},
+    {"decision": "mark_step_done", "step_id": "s2", "reason": "risk loaded"},
+    {"decision": "mark_step_done", "step_id": "s3", "reason": "sized"},
+    {"decision": "finalize", "reason": "enough evidence"}
+  ],
   "rounds": [
     {
       "tool_calls": [

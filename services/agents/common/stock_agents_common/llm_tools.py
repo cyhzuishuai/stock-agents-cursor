@@ -2,10 +2,15 @@
 
 Round advancement (mock mode)
 -----------------------------
-Each ``ToolLLMClient`` instance keeps an integer ``_round_index`` starting at 0.
-Every call to ``complete_tools`` consumes ``script["rounds"][_round_index]`` and
-then increments the index. State is **per client instance**, not derived from
-message length — create a new client (or call ``reset()``) for a fresh script run.
+Each ``ToolLLMClient`` instance keeps:
+
+- ``_round_index`` — ``complete_tools`` consumes ``script["rounds"]`` entries
+- ``_reflect_index`` — ``complete_reflect`` consumes ``script["reflect"]`` entries
+- ``_plan_consumed`` — ``complete_plan`` reads ``script["plan"]`` once
+
+State is **per client instance**, not derived from message length — create a new
+client (or call ``reset()``) for a fresh script run. Plan/reflect never advance
+``_round_index``.
 
 Script resolution order:
 1. ``MOCK_TOOL_SCRIPT`` env path (if set)
@@ -245,17 +250,38 @@ def _parse_openai_message(message: dict[str, Any], usage: dict[str, Any] | None,
     }
 
 
+def _mock_usage() -> dict[str, int]:
+    return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+
+def _plan_steps_from_script(plan_data: Any) -> list[dict[str, Any]]:
+    """Extract plan steps from script ``plan`` section (raw, lightly shaped)."""
+    if isinstance(plan_data, dict):
+        steps = plan_data.get("steps", [])
+    elif isinstance(plan_data, list):
+        steps = plan_data
+    else:
+        steps = []
+    if not isinstance(steps, list):
+        return []
+    return [copy.deepcopy(s) for s in steps if isinstance(s, dict)]
+
+
 class ToolLLMClient:
     """OpenAI-compatible chat completions with tools, plus scripted mock mode."""
 
     def __init__(self, *, http_client: httpx.Client | None = None) -> None:
         self._http_client = http_client
         self._round_index = 0
+        self._reflect_index = 0
+        self._plan_consumed = False
         self._script: dict[str, Any] | None = None
 
     def reset(self) -> None:
-        """Reset mock round index and clear cached script (re-read on next call)."""
+        """Reset mock indices and clear cached script (re-read on next call)."""
         self._round_index = 0
+        self._reflect_index = 0
+        self._plan_consumed = False
         self._script = None
 
     def complete_tools(
@@ -271,6 +297,26 @@ class ToolLLMClient:
         if _is_mock_mode():
             return self._complete_mock()
         return self._complete_real(system, messages, tools_openai_schema)
+
+    def complete_plan(self, system: str, user: str) -> dict[str, Any]:
+        """Return ``{content, plan_steps, usage, latency_ms, router?}``.
+
+        Mock: read ``script["plan"]`` once (does not consume ``rounds``).
+        Live: chat completions without tools; parse JSON ``{steps:[...]}``.
+        """
+        if _is_mock_mode():
+            return self._complete_plan_mock()
+        return self._complete_plan_real(system, user)
+
+    def complete_reflect(self, system: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Return ``{content, reflect, usage, latency_ms, router?}``.
+
+        Mock: consume next ``script["reflect"]`` entry (separate index).
+        Live: chat completions without tools; parse JSON reflect object.
+        """
+        if _is_mock_mode():
+            return self._complete_reflect_mock()
+        return self._complete_reflect_real(system, messages)
 
     def _load_script(self) -> dict[str, Any]:
         if self._script is None:
@@ -290,6 +336,70 @@ class ToolLLMClient:
         self._round_index += 1
         latency_ms = int((time.perf_counter() - started) * 1000)
         return _round_to_response(round_data, latency_ms=latency_ms)
+
+    def _complete_plan_mock(self) -> dict[str, Any]:
+        started = time.perf_counter()
+        if self._plan_consumed:
+            raise IndexError("Mock plan already consumed; call reset() for a fresh run")
+        script = self._load_script()
+        if "plan" not in script:
+            raise KeyError("Mock tool script missing 'plan' section")
+        plan_steps = _plan_steps_from_script(script["plan"])
+        self._plan_consumed = True
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        content = json.dumps({"steps": plan_steps}, ensure_ascii=False)
+        return {
+            "content": content,
+            "plan_steps": plan_steps,
+            "usage": _mock_usage(),
+            "latency_ms": latency_ms,
+        }
+
+    def _complete_reflect_mock(self) -> dict[str, Any]:
+        started = time.perf_counter()
+        script = self._load_script()
+        reflect_list = script.get("reflect") or []
+        if self._reflect_index >= len(reflect_list):
+            raise IndexError(
+                f"Mock reflect script exhausted: "
+                f"reflect_index={self._reflect_index}, reflect={len(reflect_list)}"
+            )
+        reflect = copy.deepcopy(reflect_list[self._reflect_index])
+        self._reflect_index += 1
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        content = json.dumps(reflect, ensure_ascii=False) if isinstance(reflect, dict) else str(reflect)
+        return {
+            "content": content,
+            "reflect": reflect if isinstance(reflect, dict) else {"decision": "finalize", "reason": "invalid"},
+            "usage": _mock_usage(),
+            "latency_ms": latency_ms,
+        }
+
+    def _complete_plan_real(self, system: str, user: str) -> dict[str, Any]:
+        parsed_resp = self._complete_real(system, [{"role": "user", "content": user}], tools_openai_schema=[])
+        extracted = extract_json_from_content(parsed_resp.get("content"))
+        plan_steps: list[dict[str, Any]] = []
+        if isinstance(extracted, dict):
+            plan_steps = _plan_steps_from_script(extracted)
+        return {
+            "content": parsed_resp.get("content"),
+            "plan_steps": plan_steps,
+            "usage": parsed_resp.get("usage") or {},
+            "latency_ms": parsed_resp.get("latency_ms", 0),
+            **({"router": parsed_resp["router"]} if "router" in parsed_resp else {}),
+        }
+
+    def _complete_reflect_real(self, system: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        parsed_resp = self._complete_real(system, messages, tools_openai_schema=[])
+        extracted = extract_json_from_content(parsed_resp.get("content"))
+        reflect: dict[str, Any] = extracted if isinstance(extracted, dict) else {}
+        return {
+            "content": parsed_resp.get("content"),
+            "reflect": reflect,
+            "usage": parsed_resp.get("usage") or {},
+            "latency_ms": parsed_resp.get("latency_ms", 0),
+            **({"router": parsed_resp["router"]} if "router" in parsed_resp else {}),
+        }
 
     def _complete_real(
         self,
