@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "symbol": "AAPL",
+      "bias": "bull",
+      "confidence": 0.72,
+      "thesis": "Strong earnings momentum and resilient services growth support upside.",
+      "side": "buy",
+      "urgency": "normal",
+      "rationale": "Price above 20-day average with positive news flow.",
+      "evidence": ["get_daily_bars: AAPL close above 20d SMA", "get_news: 3 bullish headlines"]
+    },
+    {
+      "symbol": "MSFT",
+      "bias": "neutral",
+      "confidence": 0.45,
+      "thesis": "Cloud growth intact but near-term catalysts are limited.",
+      "side": "hold",
+      "urgency": "low",
+      "rationale": "Existing open buy order covers intended exposure."
+    }
+  ],
+  "warnings": []
+}

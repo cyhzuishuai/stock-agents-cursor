@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "agent_run_request.schema.json",
   "type": "object",
-  "required": ["run_id", "trade_date", "watchlist", "account_snapshot"],
+  "required": ["run_id", "trade_date", "watchlist", "account_snapshot", "agent"],
   "properties": {
     "run_id": { "type": "string", "format": "uuid" },
     "trade_date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
@@ -11,11 +11,13 @@
       "minItems": 1,
       "items": { "type": "string", "minLength": 1 }
     },
+    "agent": { "type": "string", "enum": ["analyst", "portfolio"] },
     "account_snapshot": {
       "type": "object",
       "required": ["cash", "currency", "positions"],
       "properties": {
         "cash": { "type": "number" },
+        "equity": { "type": "number" },
         "currency": { "type": "string", "const": "USD" },
         "positions": {
           "type": "array",
@@ -30,8 +32,48 @@
               "take_profit": { "type": ["number", "null"] }
             }
           }
+        },
+        "open_orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "symbol", "side", "qty", "status"],
+            "properties": {
+              "id": { "type": "string" },
+              "symbol": { "type": "string" },
+              "side": { "type": "string" },
+              "qty": { "type": "number" },
+              "status": { "type": "string" },
+              "client_order_id": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
         }
       }
+    },
+    "risk_context": {
+      "type": "object",
+      "properties": {
+        "execution_mode": { "type": "string" },
+        "rules": {
+          "type": "object",
+          "properties": {
+            "max_order_notional": { "type": "number" },
+            "max_single_name_weight": { "type": "number" },
+            "min_cash_ratio": { "type": "number" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_tool_rounds": { "type": "integer", "minimum": 1 },
+        "timeout_sec": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
     },
     "prior_step_outputs": { "type": "object" }
   },

@@ -1,0 +1,75 @@
+{
+  "result": {
+    "items": [
+      {
+        "symbol": "AAPL",
+        "bias": "bull",
+        "confidence": 0.72,
+        "thesis": "Strong earnings momentum and resilient services growth support upside.",
+        "side": "buy",
+        "urgency": "normal",
+        "rationale": "Price above 20-day average with positive news flow.",
+        "evidence": ["get_daily_bars: AAPL close above 20d SMA", "get_news: 3 bullish headlines"]
+      },
+      {
+        "symbol": "MSFT",
+        "bias": "neutral",
+        "confidence": 0.45,
+        "thesis": "Cloud growth intact but near-term catalysts are limited.",
+        "side": "hold",
+        "urgency": "low",
+        "rationale": "Existing open buy order covers intended exposure."
+      }
+    ],
+    "warnings": []
+  },
+  "trace": {
+    "agent": "analyst",
+    "started_at": "2026-07-22T14:00:00Z",
+    "ended_at": "2026-07-22T14:00:12Z",
+    "rounds": [
+      {
+        "i": 1,
+        "llm": { "model": "gpt-4o-mini", "latency_ms": 820 },
+        "assistant": {
+          "content": null,
+          "tool_calls": [
+            { "id": "c1", "name": "get_account_view", "args": {} }
+          ]
+        },
+        "tools": [
+          {
+            "id": "c1",
+            "name": "get_account_view",
+            "ok": true,
+            "latency_ms": 2,
+            "result_preview": "{\"cash\":100000,\"equity\":101800}",
+            "error": null
+          }
+        ]
+      },
+      {
+        "i": 2,
+        "llm": { "model": "gpt-4o-mini", "latency_ms": 1100 },
+        "assistant": {
+          "content": null,
+          "tool_calls": [
+            { "id": "c2", "name": "get_daily_bars", "args": { "lookback_days": 20 } }
+          ]
+        },
+        "tools": [
+          {
+            "id": "c2",
+            "name": "get_daily_bars",
+            "ok": true,
+            "latency_ms": 145,
+            "result_preview": "[{\"symbol\":\"AAPL\",\"close\":191.2}]",
+            "error": null
+          }
+        ]
+      }
+    ],
+    "stop_reason": "final",
+    "usage": { "prompt_tokens": 4200, "completion_tokens": 680 }
+  }
+}

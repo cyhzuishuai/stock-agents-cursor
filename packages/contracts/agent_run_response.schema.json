@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent_run_response.schema.json",
+  "type": "object",
+  "required": ["result", "trace"],
+  "properties": {
+    "result": { "type": "object" },
+    "trace": {
+      "type": "object",
+      "required": ["agent", "rounds", "stop_reason"],
+      "properties": {
+        "agent": { "type": "string", "enum": ["analyst", "portfolio"] },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": "string", "format": "date-time" },
+        "rounds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "stop_reason": {
+          "type": "string",
+          "enum": ["final", "max_rounds", "timeout", "error"]
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "prompt_tokens": { "type": "integer", "minimum": 0 },
+            "completion_tokens": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
