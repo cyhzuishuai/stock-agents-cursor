@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -125,11 +124,8 @@ func eodParams(td string) workflow.RunParams {
 
 func TestRunEODHappyPathAutoExecBuy(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{"liquidity":0.9},"suggested_action":"auto"}],"warnings":[]}`,
 	})
 
 	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
@@ -152,12 +148,11 @@ func TestRunEODHappyPathAutoExecBuy(t *testing.T) {
 	if err := env.db.Where("run_id = ?", runID).Order("id").Find(&steps).Error; err != nil {
 		t.Fatalf("steps: %v", err)
 	}
-	if len(steps) != 5 {
-		t.Fatalf("steps count: got %d want 5", len(steps))
+	if len(steps) != 2 {
+		t.Fatalf("steps count: got %d want 2", len(steps))
 	}
 	wantSteps := []string{
-		workflow.StepData, workflow.StepResearch, workflow.StepDecision,
-		workflow.StepPortfolio, workflow.StepRisk,
+		workflow.StepAnalyst, workflow.StepPortfolio,
 	}
 	for i, s := range steps {
 		if s.Step != wantSteps[i] || s.Status != workflow.StepStatusOK {
@@ -218,12 +213,9 @@ func TestRunEODHappyPathAutoExecBuy(t *testing.T) {
 
 func TestRunEODAgentFailureMidChainNoFills(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  "", // failure
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
-		risk:      `{"items":[],"warnings":[]}`,
-		failAt:    workflow.StepDecision,
+		failAt:    workflow.StepPortfolio,
 	})
 
 	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
@@ -272,11 +264,8 @@ func TestRunEODAgentFailureMidChainNoFills(t *testing.T) {
 
 func TestRunEODBreachCreatesPendingApprovalNoFill(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
-		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"review"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
+		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000,
 	})
 
 	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
@@ -344,14 +333,12 @@ func TestRunEODBreachCreatesPendingApprovalNoFill(t *testing.T) {
 }
 
 func TestRunEODUnderstatedNotionalStillBreachesMaxOrder(t *testing.T) {
-	// Agent understates notional (100) but qty*close = 100*191 = 19100 > max 10000.
+	// Agent understates notional (100) but qty*broker_mark = 100*191 = 19100 > max 10000.
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 100, -100),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"auto"}],"warnings":[]}`,
 	})
+	env.broker.pos = []broker.Position{{Symbol: "AAPL", Qty: 0, CurrentPrice: 191}}
 
 	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
 	if err != nil {
@@ -407,11 +394,8 @@ func TestRunEODUnderstatedNotionalStillBreachesMaxOrder(t *testing.T) {
 
 func TestRunEODResolvesExecutionModeFromStrategyDB(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
-		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"review"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
+		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000,
 	})
 
 	st := models.Strategy{
@@ -460,11 +444,8 @@ func TestRunEODResolvesExecutionModeFromStrategyDB(t *testing.T) {
 
 func TestRunEODAutoRejectBreachesRejectsProposalNoApproval(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
-		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"review"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
+		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000,
 	})
 
 	sid := uint(1)
@@ -525,15 +506,12 @@ func TestRunEODAutoRejectBreachesRejectsProposalNoApproval(t *testing.T) {
 }
 
 func TestRunEODMidFillFailureSetsTerminalFailed(t *testing.T) {
-	// First symbol auto-fills; second symbol missing close → post-fill terminal status.
+	// First symbol auto-fills; second symbol missing mark (no broker price, zero notional).
 	env := setupRunnerEnv(t, stubResponses{
-		data:      `{"bars":[{"symbol":"AAPL","trade_date":"2026-07-22","open":190,"high":192,"low":188,"close":191,"volume":1000000}],"warnings":[]}`,
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
-		portfolio: `{"proposals":[{"symbol":"AAPL","side":"buy","qty":10,"estimated_notional":1910,"estimated_cash_impact":-1910},{"symbol":"MSFT","side":"buy","qty":5,"estimated_notional":1000,"estimated_cash_impact":-1000}],"warnings":[]}`,
-		risk:      `{"items":[],"warnings":[]}`,
+		analyst: analystResultJSON(),
+		portfolio: envelopeJSON(`{"proposals":[{"symbol":"AAPL","side":"buy","qty":10,"estimated_notional":1910,"estimated_cash_impact":-1910},{"symbol":"MSFT","side":"buy","qty":5,"estimated_notional":0,"estimated_cash_impact":0}],"warnings":[]}`),
 	})
-	// MSFT must be holdable so the failure path is missing close, not not_holdable.
+	// MSFT must be holdable so the failure path is missing mark, not not_holdable.
 	if err := env.db.Create(&models.WatchlistSymbol{Symbol: "MSFT", CanHold: true}).Error; err != nil {
 		t.Fatalf("seed MSFT: %v", err)
 	}
@@ -583,11 +561,8 @@ func TestRunEODMidFillFailureSetsTerminalFailed(t *testing.T) {
 
 func TestRunEODAllowsSecondRunSameTradeDate(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{"liquidity":0.9},"suggested_action":"auto"}],"warnings":[]}`,
 	})
 
 	id1, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
@@ -619,11 +594,8 @@ func TestRunEODAllowsSecondRunSameTradeDate(t *testing.T) {
 
 func TestRunEODInvalidPortfolioSchemaNoFills(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
-		portfolio: `{"warnings":[]}`, // missing proposals
-		risk:      `{"items":[],"warnings":[]}`,
+		analyst:  analystResultJSON(),
+		portfolio: envelopeJSON(`{"warnings":[]}`), // missing proposals,
 	})
 
 	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
@@ -660,17 +632,14 @@ func TestRunEODInvalidPortfolioSchemaNoFills(t *testing.T) {
 
 func TestRunEODNAVFailurePreservesExecutedStatus(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{"liquidity":0.9},"suggested_action":"auto"}],"warnings":[]}`,
 	})
 	inner := env.runner.Ledger.(*ledger.Service)
 	env.runner.Ledger = &failingNAVLedger{Service: inner, err: errors.New("nav boom")}
 	// Broker submit still works; GetAccount fails on upsertNAV so it falls through to ledger.
 	env.broker.acctErr = errors.New("account unavailable")
-	env.broker.acctFailAfter = 2 // portfolioState before + after fill succeed; upsertNAV fails
+	env.broker.acctFailAfter = 3 // snapshot + portfolioState before/after fill; upsertNAV fails
 
 	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
 	if err == nil {
@@ -704,8 +673,8 @@ func (f *failingNAVLedger) UpsertNAV(ctx context.Context, tradeDate string, mark
 }
 
 type stubResponses struct {
-	data, research, decision, portfolio, risk string
-	failAt                                    string
+	analyst, portfolio string
+	failAt             string
 }
 
 type runnerEnv struct {
@@ -745,7 +714,7 @@ func setupRunnerEnv(t *testing.T, stubs stubResponses) *runnerEnv {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	servers := startAgentStubs(t, stubs)
+	runtimeURL := startAgentRuntimeStub(t, stubs)
 
 	fb := &fakeBroker{
 		acct: broker.Account{ID: "paper", Cash: 100000, Equity: 100000, PortfolioValue: 100000},
@@ -754,12 +723,8 @@ func setupRunnerEnv(t *testing.T, stubs stubResponses) *runnerEnv {
 	runner := &workflow.Runner{
 		DB: gormDB,
 		Agents: &agentsclient.Client{
-			DataURL:      servers.data.URL,
-			ResearchURL:  servers.research.URL,
-			DecisionURL:  servers.decision.URL,
-			PortfolioURL: servers.portfolio.URL,
-			RiskURL:      servers.risk.URL,
-			MaxRetries:   0,
+			RuntimeURL: runtimeURL,
+			MaxRetries: 0,
 		},
 		Ledger: &ledger.Service{DB: gormDB},
 		Risk: risk.LoadEngineFromMap(map[string]float64{
@@ -769,69 +734,79 @@ func setupRunnerEnv(t *testing.T, stubs stubResponses) *runnerEnv {
 		}),
 		Redis:  rdb,
 		Broker: fb,
+		Config: cfg,
 	}
 	return &runnerEnv{db: gormDB, runner: runner, broker: fb}
 }
 
-type agentServers struct {
-	data, research, decision, portfolio, risk *httptest.Server
-}
-
-func startAgentStubs(t *testing.T, stubs stubResponses) agentServers {
+func startAgentRuntimeStub(t *testing.T, stubs stubResponses) string {
 	t.Helper()
-	makeServer := func(step, body string) *httptest.Server {
-		var hits atomic.Int32
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			hits.Add(1)
-			if r.URL.Path != "/v1/run" {
-				http.NotFound(w, r)
-				return
-			}
-			if stubs.failAt == step {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error":"boom"}`))
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(body))
-		}))
-		t.Cleanup(srv.Close)
-		return srv
-	}
-	return agentServers{
-		data:      makeServer(workflow.StepData, stubs.data),
-		research:  makeServer(workflow.StepResearch, stubs.research),
-		decision:  makeServer(workflow.StepDecision, stubs.decision),
-		portfolio: makeServer(workflow.StepPortfolio, stubs.portfolio),
-		risk:      makeServer(workflow.StepRisk, stubs.risk),
-	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/run" {
+			http.NotFound(w, r)
+			return
+		}
+		var req struct {
+			Agent            string         `json:"agent"`
+			PriorStepOutputs map[string]any `json:"prior_step_outputs"`
+		}
+		dec := json.NewDecoder(r.Body)
+		if err := dec.Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var body string
+		switch req.Agent {
+		case workflow.StepAnalyst:
+			body = stubs.analyst
+		case workflow.StepPortfolio:
+			body = stubs.portfolio
+		default:
+			http.Error(w, "unknown agent", http.StatusBadRequest)
+			return
+		}
+		if stubs.failAt == req.Agent {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"boom"}`))
+			return
+		}
+		if body == "" {
+			http.Error(w, "empty stub", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
-func dataBarsJSON(close float64) string {
-	return fmt.Sprintf(`{"bars":[{"symbol":"AAPL","trade_date":"%s","open":190,"high":192,"low":188,"close":%v,"volume":1000000}],"warnings":[]}`, tradeDate, close)
+func envelopeJSON(result string) string {
+	return fmt.Sprintf(`{"result":%s,"trace":{"agent":"test","rounds":[],"stop_reason":"final"}}`, result)
+}
+
+func analystResultJSON() string {
+	return envelopeJSON(`{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`)
 }
 
 func portfolioBuyJSON(qty, notional, cashImpact float64) string {
-	return fmt.Sprintf(
+	return envelopeJSON(fmt.Sprintf(
 		`{"proposals":[{"symbol":"AAPL","side":"buy","qty":%v,"estimated_notional":%v,"estimated_cash_impact":%v}],"warnings":[]}`,
 		qty, notional, cashImpact,
-	)
+	))
 }
 
 func portfolioSellJSON(qty, notional, cashImpact float64) string {
-	return fmt.Sprintf(
+	return envelopeJSON(fmt.Sprintf(
 		`{"proposals":[{"symbol":"AAPL","side":"sell","qty":%v,"estimated_notional":%v,"estimated_cash_impact":%v}],"warnings":[]}`,
 		qty, notional, cashImpact,
-	)
+	))
 }
 
 func TestRunEODBuyRejectedWhenNotHoldable(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{"liquidity":0.9},"suggested_action":"auto"}],"warnings":[]}`,
 	})
 	if err := env.db.Model(&models.WatchlistSymbol{}).Where("symbol = ?", "AAPL").Update("can_hold", false).Error; err != nil {
 		t.Fatalf("set can_hold: %v", err)
@@ -867,11 +842,8 @@ func TestRunEODBuyRejectedWhenNotHoldable(t *testing.T) {
 
 func TestRunEODSellAllowedWhenNotHoldable(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bear","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"sell","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioSellJSON(5, 955, 955),
-		risk:      `{"items":[{"symbol":"AAPL","side":"sell","flags":["size_ok"],"scores":{"liquidity":0.9},"suggested_action":"auto"}],"warnings":[]}`,
 	})
 	if err := env.db.Model(&models.WatchlistSymbol{}).Where("symbol = ?", "AAPL").Update("can_hold", false).Error; err != nil {
 		t.Fatalf("set can_hold: %v", err)
@@ -911,11 +883,8 @@ func TestRunEODSellAllowedWhenNotHoldable(t *testing.T) {
 func TestRunEODBypassRiskSubmitsWithoutRisk(t *testing.T) {
 	// qty*close = 100*191 = 19100 > max_order_notional 10000 — would always breach.
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"review"}],"warnings":[]}`,
 	})
 
 	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
@@ -949,11 +918,8 @@ func TestRunEODBypassRiskSubmitsWithoutRisk(t *testing.T) {
 
 func TestRunEODAutoRejectStillRejects(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"review"}],"warnings":[]}`,
 	})
 
 	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
@@ -979,11 +945,8 @@ func TestRunEODAutoRejectStillRejects(t *testing.T) {
 
 func TestRunEODRequireApprovalDoesNotSubmit(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["large"],"scores":{},"suggested_action":"review"}],"warnings":[]}`,
 	})
 
 	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
@@ -1017,11 +980,8 @@ func TestRunEODRequireApprovalDoesNotSubmit(t *testing.T) {
 
 func TestRunEODPassSubmitsToBroker(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{"liquidity":0.9},"suggested_action":"auto"}],"warnings":[]}`,
 	})
 
 	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
@@ -1058,11 +1018,8 @@ func TestRunEODPassSubmitsToBroker(t *testing.T) {
 
 func TestRunEODNilBrokerWithSubmitFailsRun(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{},"suggested_action":"auto"}],"warnings":[]}`,
 	})
 	env.runner.Broker = nil
 
@@ -1071,10 +1028,10 @@ func TestRunEODNilBrokerWithSubmitFailsRun(t *testing.T) {
 		ExecutionMode: workflow.ExecutionModeBypassRisk,
 	})
 	if err == nil {
-		t.Fatal("expected error when broker is nil and proposals would submit")
+		t.Fatal("expected error when broker is nil")
 	}
-	if !errors.Is(err, workflow.ErrBrokerNotConfigured) {
-		t.Fatalf("error: got %v want ErrBrokerNotConfigured", err)
+	if !strings.Contains(err.Error(), "broker is required") {
+		t.Fatalf("error: got %v want broker is required (agent snapshot)", err)
 	}
 
 	var run models.WorkflowRun
@@ -1085,24 +1042,19 @@ func TestRunEODNilBrokerWithSubmitFailsRun(t *testing.T) {
 		t.Fatalf("run status: got %q want failed (not executed)", run.Status)
 	}
 
-	var proposals []models.TradeProposal
-	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+	var proposals int64
+	if err := env.db.Model(&models.TradeProposal{}).Count(&proposals).Error; err != nil {
 		t.Fatalf("proposals: %v", err)
 	}
-	for _, p := range proposals {
-		if p.Status == workflow.ProposalRejected {
-			t.Fatalf("proposal must not be individually rejected when broker is nil: %+v", p)
-		}
+	if proposals != 0 {
+		t.Fatalf("proposals: got %d want 0 (fail before agent chain)", proposals)
 	}
 }
 
 func TestRunEODSubmitOrderErrorRejectsAndContinues(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
-		portfolio: `{"proposals":[{"symbol":"AAPL","side":"buy","qty":5,"estimated_notional":955,"estimated_cash_impact":-955},{"symbol":"AAPL","side":"buy","qty":5,"estimated_notional":955,"estimated_cash_impact":-955}],"warnings":[]}`,
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{},"suggested_action":"auto"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
+		portfolio: envelopeJSON(`{"proposals":[{"symbol":"AAPL","side":"buy","qty":5,"estimated_notional":955,"estimated_cash_impact":-955},{"symbol":"AAPL","side":"buy","qty":5,"estimated_notional":955,"estimated_cash_impact":-955}],"warnings":[]}`),
 	})
 
 	var submitN int
@@ -1170,11 +1122,8 @@ func TestRunEODSubmitOrderErrorRejectsAndContinues(t *testing.T) {
 
 func TestRunEODPostSubmitGetOrderErrorKeepsSubmitted(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
-		data:      dataBarsJSON(191),
-		research:  `{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok"}],"warnings":[]}`,
-		decision:  `{"intents":[{"symbol":"AAPL","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`,
+		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
-		risk:      `{"items":[{"symbol":"AAPL","side":"buy","flags":["size_ok"],"scores":{},"suggested_action":"auto"}],"warnings":[]}`,
 	})
 	env.broker.getErr = errors.New("alpaca get order unavailable")
 

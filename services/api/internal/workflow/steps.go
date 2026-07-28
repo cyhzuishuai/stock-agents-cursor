@@ -4,11 +4,14 @@ import "time"
 
 const (
 	StepCreated   = "created"
-	StepData      = "data"
-	StepResearch  = "research"
-	StepDecision  = "decision"
+	StepAnalyst   = "analyst"
 	StepPortfolio = "portfolio"
-	StepRisk      = "risk"
+
+	// Legacy step names retained for historical WorkflowStepResult rows / UI reads.
+	StepData     = "data"
+	StepResearch = "research"
+	StepDecision = "decision"
+	StepRisk     = "risk"
 
 	StatusCreated          = "created"
 	StatusFailed           = "failed"
@@ -40,9 +43,10 @@ const (
 	ExecutionModeRequireApproval = "require_approval"
 	ExecutionModeBypassRisk      = "bypass_risk"
 
-	DefaultLockTTL   = 30 * time.Minute
-	DataAgentTimeout = 60 * time.Second
-	LLMAgentTimeout  = 120 * time.Second
+	DefaultLockTTL        = 30 * time.Minute
+	DataAgentTimeout      = 60 * time.Second // legacy
+	LLMAgentTimeout       = 120 * time.Second
+	AnalystAgentTimeout   = 180 * time.Second
 
 	BrokerSyncTimeout      = 15 * time.Second
 	BrokerSyncPollInterval = 250 * time.Millisecond
@@ -54,13 +58,10 @@ type AgentStep struct {
 	Timeout time.Duration
 }
 
-// AgentChain is data → research → decision → portfolio → risk.
+// AgentChain is analyst → portfolio (tool-loop runtime).
 func AgentChain() []AgentStep {
 	return []AgentStep{
-		{Name: StepData, Timeout: DataAgentTimeout},
-		{Name: StepResearch, Timeout: LLMAgentTimeout},
-		{Name: StepDecision, Timeout: LLMAgentTimeout},
+		{Name: StepAnalyst, Timeout: AnalystAgentTimeout},
 		{Name: StepPortfolio, Timeout: LLMAgentTimeout},
-		{Name: StepRisk, Timeout: LLMAgentTimeout},
 	}
 }

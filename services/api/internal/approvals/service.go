@@ -38,15 +38,6 @@ type Service struct {
 	Broker broker.Client
 }
 
-type dataBar struct {
-	Symbol string  `json:"symbol"`
-	Close  float64 `json:"close"`
-}
-
-type dataResult struct {
-	Bars []dataBar `json:"bars"`
-}
-
 func (s *Service) Decide(ctx context.Context, approvalID uint, decision, note string, userID uint) error {
 	if decision != DecisionApproved && decision != DecisionRejected {
 		return ErrInvalidDecision
@@ -257,24 +248,29 @@ func (s *Service) refreshRunStatus(ctx context.Context, runID uint) error {
 }
 
 func (s *Service) loadMarks(ctx context.Context, runID uint) (map[string]float64, error) {
-	return loadMarksTx(s.DB.WithContext(ctx), runID)
-}
+	marks := map[string]float64{}
+	if s.Broker != nil {
+		positions, err := s.Broker.ListPositions(ctx)
+		if err == nil {
+			for _, p := range positions {
+				if p.CurrentPrice > 0 {
+					marks[p.Symbol] = p.CurrentPrice
+				}
+			}
+		}
+	}
 
-func loadMarksTx(tx *gorm.DB, runID uint) (map[string]float64, error) {
-	var step models.WorkflowStepResult
-	if err := tx.Where("run_id = ? AND step = ?", runID, workflow.StepData).First(&step).Error; err != nil {
-		return nil, fmt.Errorf("load data step: %w", err)
+	var proposals []models.TradeProposal
+	if err := s.DB.WithContext(ctx).Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		return nil, fmt.Errorf("load proposals for marks: %w", err)
 	}
-	var data dataResult
-	if err := json.Unmarshal([]byte(step.PayloadJSON), &data); err != nil {
-		return nil, fmt.Errorf("parse data step: %w", err)
-	}
-	marks := make(map[string]float64, len(data.Bars))
-	for _, b := range data.Bars {
-		if b.Symbol == "" {
+	for _, p := range proposals {
+		if _, ok := marks[p.Symbol]; ok {
 			continue
 		}
-		marks[b.Symbol] = b.Close
+		if p.Qty > 0 && p.EstimatedNotional > 0 {
+			marks[p.Symbol] = p.EstimatedNotional / p.Qty
+		}
 	}
 	if len(marks) == 0 {
 		return nil, ErrMissingFillPrice

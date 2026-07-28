@@ -489,8 +489,8 @@ func TestRunsDetailAndEODAndCancel(t *testing.T) {
 		t.Fatalf("create run: %v", err)
 	}
 	if err := gormDB.Create(&models.WorkflowStepResult{
-		RunID: run.ID, Step: workflow.StepData, Status: workflow.StepStatusOK,
-		PayloadJSON: `{"bars":[{"symbol":"AAPL","close":190}]}`,
+		RunID: run.ID, Step: workflow.StepAnalyst, Status: workflow.StepStatusOK,
+		PayloadJSON: `{"result":{"items":[]},"trace":{"agent":"analyst","rounds":[],"stop_reason":"final"}}`,
 	}).Error; err != nil {
 		t.Fatalf("create step: %v", err)
 	}
@@ -653,8 +653,8 @@ func TestApprovalsListAndDecide(t *testing.T) {
 		t.Fatalf("create run: %v", err)
 	}
 	if err := gormDB.Create(&models.WorkflowStepResult{
-		RunID: run.ID, Step: workflow.StepData, Status: workflow.StepStatusOK,
-		PayloadJSON: `{"bars":[{"symbol":"AAPL","close":190}]}`,
+		RunID: run.ID, Step: workflow.StepAnalyst, Status: workflow.StepStatusOK,
+		PayloadJSON: `{"result":{"items":[]},"trace":{"agent":"analyst","rounds":[],"stop_reason":"final"}}`,
 	}).Error; err != nil {
 		t.Fatalf("create step: %v", err)
 	}

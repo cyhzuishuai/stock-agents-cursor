@@ -10,6 +10,7 @@ import (
 
 	"github.com/cyh/stock-agents/services/api/internal/agentsclient"
 	"github.com/cyh/stock-agents/services/api/internal/broker"
+	"github.com/cyh/stock-agents/services/api/internal/config"
 	"github.com/cyh/stock-agents/services/api/internal/ledger"
 	"github.com/cyh/stock-agents/services/api/internal/models"
 	"github.com/cyh/stock-agents/services/api/internal/risk"
@@ -45,23 +46,22 @@ type Runner struct {
 	Risk   risk.Engine
 	Redis  redis.Cmdable
 	Broker broker.Client // required in production; tests use a fake
+	Config *config.Config
 }
 
 type agentRunRequest struct {
-	RunID            string                 `json:"run_id"`
-	TradeDate        string                 `json:"trade_date"`
-	Watchlist        []string               `json:"watchlist"`
-	AccountSnapshot  ledger.AccountSnapshot `json:"account_snapshot"`
-	PriorStepOutputs map[string]any         `json:"prior_step_outputs"`
+	RunID            string               `json:"run_id"`
+	TradeDate        string               `json:"trade_date"`
+	Watchlist        []string             `json:"watchlist"`
+	Agent            string               `json:"agent"`
+	AccountSnapshot  AgentAccountSnapshot `json:"account_snapshot"`
+	RiskContext      AgentRiskContext     `json:"risk_context"`
+	PriorStepOutputs map[string]any       `json:"prior_step_outputs"`
 }
 
-type dataBar struct {
-	Symbol string  `json:"symbol"`
-	Close  float64 `json:"close"`
-}
-
-type dataResult struct {
-	Bars []dataBar `json:"bars"`
+type agentEnvelope struct {
+	Result json.RawMessage `json:"result"`
+	Trace  json.RawMessage `json:"trace"`
 }
 
 type portfolioProposal struct {
@@ -226,10 +226,11 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 	if err != nil {
 		return nil, false, err
 	}
-	snap, err := r.Ledger.AccountSnapshot(ctx, account.ID)
+	agentSnap, err := buildAgentSnapshot(ctx, r.Broker)
 	if err != nil {
-		return nil, false, fmt.Errorf("account snapshot: %w", err)
+		return nil, false, fmt.Errorf("agent snapshot: %w", err)
 	}
+	riskCtx := buildRiskContext(executionMode, r.Config)
 
 	prior := map[string]any{}
 	for _, step := range AgentChain() {
@@ -244,7 +245,9 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 			RunID:            strconv.FormatUint(uint64(run.ID), 10),
 			TradeDate:        run.TradeDate,
 			Watchlist:        watchlist,
-			AccountSnapshot:  snap,
+			Agent:            step.Name,
+			AccountSnapshot:  agentSnap,
+			RiskContext:      riskCtx,
 			PriorStepOutputs: prior,
 		}
 		raw, err := r.Agents.Call(ctx, baseURL, body, step.Timeout)
@@ -252,27 +255,23 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 			_ = r.persistStep(ctx, run.ID, step.Name, StepStatusFailed, fmt.Sprintf(`{"error":%q}`, err.Error()))
 			return nil, false, fmt.Errorf("agent %s: %w", step.Name, err)
 		}
+		// Persist full raw envelope {result,trace}.
 		if err := r.persistStep(ctx, run.ID, step.Name, StepStatusOK, string(raw)); err != nil {
 			return nil, false, err
 		}
-		var decoded any
-		if err := json.Unmarshal(raw, &decoded); err != nil {
-			return nil, false, fmt.Errorf("decode %s payload: %w", step.Name, err)
+		var envelope agentEnvelope
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return nil, false, fmt.Errorf("decode %s envelope: %w", step.Name, err)
 		}
-		prior[step.Name] = decoded
-	}
-
-	dataRaw, err := json.Marshal(prior[StepData])
-	if err != nil {
-		return nil, false, fmt.Errorf("marshal data result: %w", err)
-	}
-	var data dataResult
-	if err := json.Unmarshal(dataRaw, &data); err != nil {
-		return nil, false, fmt.Errorf("parse data bars: %w", err)
-	}
-	marks := marksFromBars(data.Bars)
-	if len(marks) == 0 {
-		return nil, false, fmt.Errorf("no marks from data bars")
+		if len(envelope.Result) == 0 {
+			return nil, false, fmt.Errorf("agent %s: missing result in envelope", step.Name)
+		}
+		var resultObj any
+		if err := json.Unmarshal(envelope.Result, &resultObj); err != nil {
+			return nil, false, fmt.Errorf("decode %s result: %w", step.Name, err)
+		}
+		// Forward only the result object to the next agent.
+		prior[step.Name] = resultObj
 	}
 
 	portRaw, err := json.Marshal(prior[StepPortfolio])
@@ -308,7 +307,17 @@ func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun
 		}
 	}
 
+	// Marks without data step: broker prices, else estimated_notional/qty.
+	marks := map[string]float64{}
 	marks = r.mergeBrokerMarks(ctx, marks)
+	for _, p := range port.Proposals {
+		if _, ok := marks[p.Symbol]; ok {
+			continue
+		}
+		if p.Qty > 0 && p.EstimatedNotional > 0 {
+			marks[p.Symbol] = p.EstimatedNotional / p.Qty
+		}
+	}
 
 	state, err := r.portfolioState(ctx, account.ID, marks)
 	if err != nil {
@@ -485,24 +494,14 @@ func fillNotionalAndCashImpact(side string, qty, fillPrice float64) (notional, c
 	return notional, cashImpact
 }
 
-func (r *Runner) agentURL(step string) (string, error) {
+func (r *Runner) agentURL(_ string) (string, error) {
 	if r.Agents == nil {
 		return "", fmt.Errorf("agents client is nil")
 	}
-	switch step {
-	case StepData:
-		return r.Agents.DataURL, nil
-	case StepResearch:
-		return r.Agents.ResearchURL, nil
-	case StepDecision:
-		return r.Agents.DecisionURL, nil
-	case StepPortfolio:
-		return r.Agents.PortfolioURL, nil
-	case StepRisk:
-		return r.Agents.RiskURL, nil
-	default:
-		return "", fmt.Errorf("unknown agent step %q", step)
+	if strings.TrimSpace(r.Agents.RuntimeURL) == "" {
+		return "", fmt.Errorf("agent runtime URL is empty")
 	}
+	return r.Agents.RuntimeURL, nil
 }
 
 func (r *Runner) loadAccount(ctx context.Context) (models.Account, error) {
@@ -652,13 +651,3 @@ func (r *Runner) failRun(ctx context.Context, run *models.WorkflowRun, cause err
 	}).Error
 }
 
-func marksFromBars(bars []dataBar) map[string]float64 {
-	marks := make(map[string]float64, len(bars))
-	for _, b := range bars {
-		if b.Symbol == "" {
-			continue
-		}
-		marks[b.Symbol] = b.Close
-	}
-	return marks
-}

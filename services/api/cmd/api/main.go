@@ -87,6 +87,7 @@ func main() {
 			}),
 			Redis:  rdb,
 			Broker: brokerClient,
+			Config: cfg,
 		}
 	}
 

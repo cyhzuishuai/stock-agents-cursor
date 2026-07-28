@@ -463,15 +463,6 @@ func setupPendingApproval(t *testing.T, br broker.Client) (*approvals.Service, *
 	if err := gormDB.Create(&run).Error; err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	step := models.WorkflowStepResult{
-		RunID:       run.ID,
-		Step:        workflow.StepData,
-		Status:      workflow.StepStatusOK,
-		PayloadJSON: fmt.Sprintf(`{"bars":[{"symbol":"AAPL","trade_date":"%s","close":191}],"warnings":[]}`, tradeDate),
-	}
-	if err := gormDB.Create(&step).Error; err != nil {
-		t.Fatalf("create step: %v", err)
-	}
 	proposal := models.TradeProposal{
 		RunID:               run.ID,
 		Symbol:              "AAPL",
