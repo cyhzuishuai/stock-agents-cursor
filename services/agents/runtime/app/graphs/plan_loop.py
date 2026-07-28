@@ -504,7 +504,7 @@ def run_plan_loop(
                 result = None
 
         if result is None:
-            # Match run_tool_loop: baseline → final; analyst hold defaults → max_rounds.
+            # Fallback: baseline → final; analyst hold defaults → max_rounds.
             try:
                 result = _try_align(_fallback_candidate())
                 if result is not None:
