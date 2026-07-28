@@ -114,3 +114,102 @@ def test_run_plan_loop_happy_path_emits_events_and_final_result():
     assert "get_news:True" in (out.get("working_memory") or {}).get("evidence_refs", []) or (
         "get_news:True" in (out["trace"].get("working_memory") or {}).get("evidence_refs", [])
     )
+
+
+class RevisePatchClient:
+    """revise_plan with list plan_patch must not call complete_plan again."""
+
+    def __init__(self):
+        self.plan_calls = 0
+        self.n = 0
+        self.plan_users: list[str] = []
+
+    def complete_plan(self, system, user):
+        self.plan_calls += 1
+        self.plan_users.append(user)
+        return {
+            "plan_steps": [{"id": "s1", "title": "Old", "status": "pending"}],
+            "usage": {},
+            "latency_ms": 1,
+        }
+
+    def complete_tools(self, system, messages, tools):
+        self.n += 1
+        if self.n == 1:
+            return {
+                "content": "need different evidence",
+                "tool_calls": None,
+                "usage": {},
+                "latency_ms": 1,
+            }
+        return {
+            "content": json.dumps(
+                {
+                    "items": [
+                        {
+                            "symbol": "AAPL",
+                            "bias": "neutral",
+                            "confidence": 0.4,
+                            "thesis": "t",
+                            "side": "hold",
+                            "urgency": "low",
+                            "rationale": "r",
+                        }
+                    ],
+                    "warnings": [],
+                }
+            ),
+            "tool_calls": None,
+            "usage": {},
+            "latency_ms": 1,
+        }
+
+    def complete_reflect(self, system, messages):
+        if self.n == 1:
+            return {
+                "reflect": {
+                    "decision": "revise_plan",
+                    "reason": "switch step",
+                    "plan_patch": [{"id": "s2", "title": "Bars", "status": "pending"}],
+                },
+                "usage": {},
+                "latency_ms": 1,
+            }
+        return {
+            "reflect": {"decision": "finalize", "reason": "done"},
+            "usage": {},
+            "latency_ms": 1,
+        }
+
+
+def test_revise_plan_list_patch_skips_complete_plan_and_first_plan_is_clean():
+    client = RevisePatchClient()
+    req = {
+        "agent": "analyst",
+        "trade_date": "2026-07-28",
+        "watchlist": ["AAPL"],
+        "account_snapshot": {"cash": 100000, "equity": 100000, "positions": [], "open_orders": []},
+        "risk_context": {"execution_mode": "approval_required"},
+        "limits": {"max_tool_rounds": 8},
+    }
+
+    out = run_plan_loop(
+        agent="analyst",
+        req=req,
+        system_plan="plan",
+        system_act="act",
+        system_reflect="reflect",
+        user_message="Analyze AAPL",
+        tools_schema=[],
+        tool_registry={},
+        result_schema="analyst_result",
+        llm_client=client,
+        ctx=RunContext(req=req),
+    )
+
+    assert client.plan_calls == 1
+    assert client.plan_users[0] == "Analyze AAPL"
+    assert "Prior plan:" not in client.plan_users[0]
+    assert out["trace"]["stop_reason"] == "final"
+    assert any(e.get("type") == "plan" and e.get("source") == "plan_patch" for e in out["trace"]["events"])
+    validate(out, "agent_run_response")

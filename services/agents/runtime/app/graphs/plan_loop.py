@@ -187,12 +187,14 @@ def run_plan_loop(
         return aligned
 
     def plan_node(state: PlanLoopState) -> dict[str, Any]:
-        messages = list(state.get("messages") or [])
         user_content = user_message
-        if messages:
-            # Re-plan: include prior context in the plan user turn.
+        existing_plan = state.get("plan") or []
+        # First entry always has the initial user message in state; only treat as
+        # re-plan when a prior plan exists or reflect asked for revise_plan.
+        is_replan = bool(existing_plan) or state.get("reflect_decision") == "revise_plan"
+        if is_replan:
             user_content = (
-                f"{user_message}\n\nPrior plan: {json.dumps(state.get('plan') or [], ensure_ascii=False)}\n"
+                f"{user_message}\n\nPrior plan: {json.dumps(existing_plan, ensure_ascii=False)}\n"
                 f"Working memory: {json.dumps(state.get('working_memory') or {}, ensure_ascii=False)}"
             )
         resp = client.complete_plan(system_plan, user_content)
@@ -424,15 +426,29 @@ def run_plan_loop(
                 _append_event(events, "step_start", step_id=next_id)
         elif decision == "revise_plan":
             patch = reflect.get("plan_patch")
+            patched = False
             if isinstance(patch, list):
                 try:
                     plan = normalize_plan_steps(patch)
                     plan, next_id = _mark_current_in_progress(plan)
                     updates["plan"] = plan
                     updates["current_step_id"] = next_id
+                    if next_id:
+                        _append_event(events, "step_start", step_id=next_id)
+                    _append_event(
+                        events,
+                        "plan",
+                        plan=plan,
+                        current_step_id=next_id,
+                        source="plan_patch",
+                    )
+                    patched = True
                 except ValueError:
-                    pass
-            # else: plan_node will re-plan from scratch
+                    patched = False
+            if patched:
+                # List patch applied — do not call complete_plan; resume act.
+                updates["reflect_decision"] = "continue"
+            # else: keep revise_plan → plan_node for full LLM re-plan
         elif decision == "finalize":
             updates["stop_reason"] = "final"
         # continue: keep current step, act again
