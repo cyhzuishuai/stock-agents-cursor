@@ -44,8 +44,9 @@ const (
 
 	DefaultLockTTL        = 30 * time.Minute
 	DataAgentTimeout      = 60 * time.Second // legacy
-	LLMAgentTimeout       = 120 * time.Second
-	AnalystAgentTimeout   = 180 * time.Second
+	// Live plan/act/reflect + tools routinely exceed 2–3 minutes per agent.
+	LLMAgentTimeout     = 480 * time.Second
+	AnalystAgentTimeout = 600 * time.Second
 
 	BrokerSyncTimeout      = 15 * time.Second
 	BrokerSyncPollInterval = 250 * time.Millisecond
