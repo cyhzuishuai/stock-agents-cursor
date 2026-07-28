@@ -88,6 +88,8 @@ Agent-runtime **永不**调用 Alpaca Trading，也不直接改现金 / 持仓 /
 - 待审列表支持按笔 approve / reject（可附备注）；可取消整次 run（已提交订单保留）。
 - Runs 列表与详情展示状态、触发来源（`manual` / `pre_open` / `intraday` 等）、关联策略。
 - Run 详情可展开各步骤，查看 Agent 返回的 `payload_json`（含 `{result, trace}` 工具轨迹）。
+- 步骤内展示 **Agent 时间线**（`trace.events[]`：plan / step_start / llm / tool / reflect / handoff / finalize）；有 `handoff` 时显示摘要；仍保留 `trace.rounds[]` 工具轮次展开。无 `events` 的历史 run 自动回退为仅 rounds 视图。
+- **LangSmith**（可选）：`LANGSMITH_TRACING=true` 且配置 `LANGSMITH_API_KEY` 时，agent-runtime 并行导出 trace 至 LangSmith 项目 UI；默认关闭，导出失败不阻断交易。本地 `payload_json.trace` 仍为完整审计权威。
 
 ### 3.6 控制台刷新
 
@@ -126,7 +128,7 @@ Web (Next.js, JWT)
 | `/` | Overview：NAV / Equity / Cash、待审提示、最近 run、持仓摘要、美东时钟、NAV 历史等 |
 | `/portfolio` | 持仓、权重与盈亏等（Alpaca 权威） |
 | `/runs` | 工作流历史；可手动 **Run now** |
-| `/runs/[id]` | 步骤时间线、提案结果、逐步 payload |
+| `/runs/[id]` | 步骤时间线、Agent events 时间线、提案结果、逐步 payload |
 | `/approvals` | 待审提案的批准 / 拒绝 |
 | `/settings` | 观察列表（搜索增删、`can_hold`）、风控阈值、策略 CRUD / 激活 |
 
