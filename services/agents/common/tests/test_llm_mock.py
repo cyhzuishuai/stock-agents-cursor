@@ -77,8 +77,35 @@ def test_real_mode_requires_api_key(monkeypatch):
     monkeypatch.setenv("LLM_MODE", "live")
 
     client = LLMClient()
-    with pytest.raises(ValueError, match="LLM_API_KEY"):
+    with pytest.raises(ValueError, match="LLM_API_KEY or LLM_PRIMARY_API_KEY"):
         client.complete_json("sys", "user", "research_result")
+
+
+def test_real_mode_uses_primary_env(monkeypatch):
+    monkeypatch.setenv("LLM_MODE", "live")
+    monkeypatch.setenv("LLM_PRIMARY_API_KEY", "ark-key")
+    monkeypatch.setenv("LLM_PRIMARY_BASE_URL", "https://ark.example/api/v3")
+    monkeypatch.setenv("LLM_PRIMARY_MODEL", "Doubao-Smart-Router")
+
+    payload = {
+        "intents": [
+            {"symbol": "AAPL", "side": "buy", "urgency": "normal", "rationale": "From LLM."}
+        ],
+        "warnings": [],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://ark.example/api/v3/chat/completions"
+        body = json.loads(request.content)
+        assert body["model"] == "Doubao-Smart-Router"
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(payload)}}]},
+        )
+
+    client = LLMClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = client.complete_json("sys", "user", "decision_result")
+    assert result == payload
 
 
 def test_real_mode_empty_llm_model_falls_back_to_default(monkeypatch):

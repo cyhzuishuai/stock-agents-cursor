@@ -8,6 +8,7 @@ from pathlib import Path
 
 import httpx
 
+from stock_agents_common.model_router import chat_completions
 from stock_agents_common.schemas import validate
 
 
@@ -46,15 +47,7 @@ class LLMClient:
         return data
 
     def _complete_real(self, system: str, user: str, schema_name: str) -> dict:
-        api_key = os.environ.get("LLM_API_KEY", "").strip()
-        if not api_key:
-            raise ValueError("LLM_API_KEY is required when LLM_MODE is not mock")
-
-        base_url = (os.environ.get("LLM_BASE_URL") or "https://api.openai.com/v1").strip().rstrip("/")
-        model = (os.environ.get("LLM_MODEL") or "gpt-4o-mini").strip()
-
         payload = {
-            "model": model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -62,21 +55,15 @@ class LLMClient:
             "response_format": {"type": "json_object"},
         }
 
-        if self._http_client is not None:
-            response = self._http_client.post(
-                f"{base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-        else:
-            with httpx.Client(timeout=120.0) as client:
-                response = client.post(
-                    f"{base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json=payload,
-                )
-
-        response.raise_for_status()
+        router = chat_completions(
+            payload=payload,
+            http_client=self._http_client,
+            timeout=120.0,
+        )
+        response = router.response
+        if response.status_code >= 400:
+            detail = (response.text or "")[:800]
+            raise ValueError(f"LLM HTTP {response.status_code}: {detail}")
         content = response.json()["choices"][0]["message"]["content"]
         result = json.loads(content)
         validate(result, schema_name)
