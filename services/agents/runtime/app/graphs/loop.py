@@ -28,7 +28,7 @@ def max_rounds_for(agent: str, req: dict) -> int:
     if limits.get("max_tool_rounds") is not None:
         return int(limits["max_tool_rounds"])
     env_key = "MAX_TOOL_ROUNDS_ANALYST" if agent == "analyst" else "MAX_TOOL_ROUNDS_PORTFOLIO"
-    default = "8" if agent == "analyst" else "3"
+    default = "8"
     return int(os.environ.get(env_key, default) or default)
 
 

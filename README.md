@@ -37,7 +37,7 @@ cp deploy/env.example deploy/.env
 | `WEB_SEARCH_ENABLED` | 默认 `true` |
 | `WEB_SEARCH_PROVIDER` | 默认 `tavily` |
 | `WEB_SEARCH_API_KEY` | 可选；网页搜索缺 key 时优雅降级 |
-| `MAX_TOOL_ROUNDS_ANALYST` / `MAX_TOOL_ROUNDS_PORTFOLIO` | 工具循环轮次上限（默认 8 / 3） |
+| `MAX_TOOL_ROUNDS_ANALYST` / `MAX_TOOL_ROUNDS_PORTFOLIO` | 工具循环轮次上限（默认 8 / 8） |
 | `ALPACA_API_KEY` / `ALPACA_API_SECRET` | **必填**（Paper 交易与行情）；仅服务端持有，勿暴露给浏览器 |
 | `ALPACA_BASE_URL` | 默认 `https://paper-api.alpaca.markets` |
 | `ALPACA_DATA_BASE_URL` | 默认 `https://data.alpaca.markets` |

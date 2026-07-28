@@ -34,7 +34,7 @@ Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, `ALPACA_API_KE
 | `WEB_SEARCH_PROVIDER` | Default `tavily` |
 | `WEB_SEARCH_API_KEY` | Optional; web search tool degrades when missing |
 | `MAX_TOOL_ROUNDS_ANALYST` | Default `8` |
-| `MAX_TOOL_ROUNDS_PORTFOLIO` | Default `3` |
+| `MAX_TOOL_ROUNDS_PORTFOLIO` | Default `8` |
 
 Settings watchlist symbol search (`GET /api/v1/symbols/search`) uses Alpaca assets + snapshots (not Yahoo). Requires `ALPACA_API_KEY` / `ALPACA_API_SECRET`.
 

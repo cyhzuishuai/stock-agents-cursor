@@ -114,3 +114,30 @@ def test_portfolio_skips_holds_in_baseline(monkeypatch: pytest.MonkeyPatch, agen
     symbols = {p["symbol"] for p in out["result"]["proposals"]}
     assert "MSFT" not in symbols  # hold skipped
     assert "AAPL" in symbols
+
+
+def test_portfolio_default_round_budget_completes_three_step_plan(
+    monkeypatch: pytest.MonkeyPatch, agent_run_request, mock_script_paths
+):
+    """Go omits limits; default portfolio budget must allow plan/act/reflect finalize."""
+    monkeypatch.setenv("LLM_MODE", "mock")
+    monkeypatch.setenv("MOCK_TOOL_SCRIPT", str(mock_script_paths["portfolio"]))
+    monkeypatch.delenv("MAX_TOOL_ROUNDS_PORTFOLIO", raising=False)
+
+    from app.graphs.portfolio import run_portfolio
+
+    req = _portfolio_request(agent_run_request)
+    del req["limits"]
+
+    out = run_portfolio(req)
+
+    validate(out["result"], "portfolio_result")
+    validate(out, "agent_run_response")
+    assert out["trace"]["stop_reason"] == "final"
+    finalize_events = [
+        e
+        for e in (out["trace"].get("events") or [])
+        if e.get("type") == "reflect" and e.get("decision") == "finalize"
+    ]
+    assert finalize_events
+    assert not any(e.get("reason") == "max_rounds" for e in finalize_events)

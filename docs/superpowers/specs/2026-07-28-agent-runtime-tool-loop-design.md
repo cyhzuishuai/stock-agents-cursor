@@ -243,7 +243,7 @@ No new table required for v1.
 | `WEB_SEARCH_PROVIDER` | `tavily` (or `serper`) |
 | `WEB_SEARCH_API_KEY` | Required for successful web_search when enabled |
 | `MAX_TOOL_ROUNDS_ANALYST` | `8` |
-| `MAX_TOOL_ROUNDS_PORTFOLIO` | `3` |
+| `MAX_TOOL_ROUNDS_PORTFOLIO` | `8` |
 | `MARKET_DATA_PROVIDER` | `alpaca` / `free` for bars tool |
 | `LLM_MODE` / `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | Existing |
 

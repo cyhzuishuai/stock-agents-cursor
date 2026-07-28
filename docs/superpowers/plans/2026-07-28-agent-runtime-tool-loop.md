@@ -18,7 +18,7 @@
 - `WEB_SEARCH_ENABLED` default **`true`**
 - News/web-search tool failures degrade (`ok:false`); do not fail the step alone
 - Invalid final schema / crash / max rounds without valid final → step failed → run `failed` → no Alpaca submit
-- `MAX_TOOL_ROUNDS_ANALYST` default `8`; `MAX_TOOL_ROUNDS_PORTFOLIO` default `3`
+- `MAX_TOOL_ROUNDS_ANALYST` default `8`; `MAX_TOOL_ROUNDS_PORTFOLIO` default `8`
 - Bars lookback default `20`; Finnhub news top `3` per symbol
 - CI must pass with `LLM_MODE=mock` and without Finnhub/Tavily keys
 - Do not commit unless the user explicitly asks (Commit steps are optional gates)
@@ -526,7 +526,7 @@ agent-runtime:
     MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-alpaca}
     WEB_SEARCH_ENABLED: ${WEB_SEARCH_ENABLED:-true}
     MAX_TOOL_ROUNDS_ANALYST: ${MAX_TOOL_ROUNDS_ANALYST:-8}
-    MAX_TOOL_ROUNDS_PORTFOLIO: ${MAX_TOOL_ROUNDS_PORTFOLIO:-3}
+    MAX_TOOL_ROUNDS_PORTFOLIO: ${MAX_TOOL_ROUNDS_PORTFOLIO:-8}
 
 api:
   environment:

@@ -33,7 +33,7 @@ No thin fallback needed after install succeeded (local pip required temporarily 
 
 ## Behavior notes
 
-- Max rounds: request `limits.max_tool_rounds` else `MAX_TOOL_ROUNDS_ANALYST=8` / `MAX_TOOL_ROUNDS_PORTFOLIO=3`
+- Max rounds: request `limits.max_tool_rounds` else `MAX_TOOL_ROUNDS_ANALYST=8` / `MAX_TOOL_ROUNDS_PORTFOLIO=8`
 - Analyst aligns missing watchlist symbols to hold/neutral
 - Portfolio always runs deterministic `size_proposals` baseline (recorded in trace); skips holds; LLM may refine
 - `WEB_SEARCH_ENABLED` default true; `false`/`0`/`no` omits tool binding

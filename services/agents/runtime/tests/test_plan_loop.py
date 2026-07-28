@@ -7,7 +7,7 @@ import json
 from stock_agents_common.schemas import validate
 from stock_agents_common.tools import RunContext
 
-from app.graphs.loop import openai_tool_schema
+from app.graphs.loop import max_rounds_for, openai_tool_schema
 from app.graphs.plan_loop import run_plan_loop
 
 
@@ -303,3 +303,10 @@ def test_finalize_same_model_repair_once_then_validates():
     assert out["result"]["items"][0]["thesis"] == "repaired"
     assert out["trace"]["stop_reason"] == "final"
     assert any(e.get("type") == "llm" and e.get("phase") == "repair" for e in out["trace"]["events"])
+
+
+def test_max_rounds_for_portfolio_default_matches_analyst(monkeypatch):
+    monkeypatch.delenv("MAX_TOOL_ROUNDS_PORTFOLIO", raising=False)
+    monkeypatch.delenv("MAX_TOOL_ROUNDS_ANALYST", raising=False)
+    assert max_rounds_for("portfolio", {}) == 8
+    assert max_rounds_for("analyst", {}) == 8
