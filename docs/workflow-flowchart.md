@@ -1,7 +1,8 @@
 # 策略工作流流程图
 
 对应设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`（V1 基线）。  
-**Agent Runtime 工具循环**：`docs/superpowers/specs/2026-07-28-agent-runtime-tool-loop-design.md`（**取代**五 Agent 单步链）。  
+**Agent Runtime 两步基线**：`docs/superpowers/specs/2026-07-28-agent-runtime-tool-loop-design.md`（**取代**五 Agent 单步链）。  
+**plan / ModelRouter / handoff（P0–P3，已交付）**：`docs/superpowers/specs/2026-07-28-agent-runtime-plan-router-design.md`。  
 **调度与 Runs 可观测性**：`docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`（**取代** V1 单一日终 cron 节奏）。  
 **现金 / 持仓 / 订单权威**：`docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`（Phase 1 已落地）。
 
@@ -38,8 +39,8 @@ flowchart TB
   end
 
   subgraph runtime [agent-runtime — 只读提案]
-    Analyst[Analyst graph<br/>工具循环]
-    Portfolio[Portfolio graph<br/>工具循环]
+    Analyst[Analyst graph<br/>plan/act/reflect]
+    Portfolio[Portfolio graph<br/>plan/act/reflect]
   end
 
   subgraph infra [基础设施]
@@ -48,7 +49,7 @@ flowchart TB
     MD[行情源 free/alpaca]
     News[Finnhub 新闻]
     Search[Tavily 网页搜索]
-    LLM[LLM API<br/>mock / live]
+    LLM[LLM API<br/>primary / fallback]
   end
 
   Web --> Auth
@@ -56,6 +57,7 @@ flowchart TB
   Auth --> Approvals
   Approvals --> Broker
   WF --> Analyst
+  Analyst -->|result + handoff + memory| Portfolio
   WF --> Portfolio
   WF --> RiskGo
   RiskGo -->|通过 / bypass| Broker
@@ -80,7 +82,8 @@ flowchart TB
 - **Alpaca Paper** 为现金、持仓、订单与成交价的权威；Go API 是唯一与 Alpaca Trading 交互的组件。
 - Go 在风控通过、`bypass_risk` 或审批 `approved` 后向 Alpaca 提交市价单；Postgres 仅存 runs / proposals / approvals 及订单镜像（审计）。
 - **Go 规则引擎**为最终风控判定（`bypass_risk` 时跳过）；无 Python Risk 步骤。
-- agent-runtime 通过 `LLM_MODE=mock|live` 切换 mock 与实模型；live 默认兼容 OpenAI 格式 API（含 MiniMax-M3）。
+- agent-runtime：`LLM_MODE=mock|live`；live 时 ModelRouter（`LLM_PRIMARY_*` → HTTP 失败 → `LLM_FALLBACK_*`）；可选 LangSmith 并行导出（默认关）。
+- 同一 run 内 Go 注入 `prior_step_outputs.analyst`（result）与可选 `analyst_handoff` / `analyst_working_memory`。
 
 ## 2. 工作流主流程（策略 tick / 手动）
 
@@ -90,8 +93,8 @@ flowchart TD
   Lock -->|获取失败| Abort([跳过 / 已有运行中])
   Lock -->|成功| Create[创建 workflow_run<br/>Alpaca 账户快照 + 观察列表 + risk_context]
 
-  Create --> S1[1. analyst<br/>LangGraph 工具循环<br/>→ analyst_result + trace]
-  S1 --> S2[2. portfolio<br/>LangGraph 工具循环<br/>→ portfolio_result + trace]
+  Create --> S1[1. analyst<br/>plan → act → reflect → finalize<br/>→ analyst_result + handoff? + trace]
+  S1 --> S2[2. portfolio<br/>prior: analyst + handoff/memory<br/>→ portfolio_result + trace]
 
   S2 --> Mode{execution_mode}
   Mode -->|bypass_risk| Submit[向 Alpaca 提交市价单<br/>client_order_id = proposal.id]
@@ -165,10 +168,10 @@ sequenceDiagram
   API->>DB: 创建 workflow_run<br/>(strategy_id + trigger)
 
   API->>RT: POST /v1/run (agent=analyst)
-  RT-->>API: {result: analyst_result, trace}
+  RT-->>API: {result, trace, handoff?, working_memory?}
   API->>DB: 存 workflow_step_results (完整 envelope)
 
-  API->>RT: POST /v1/run (agent=portfolio, prior.analyst)
+  API->>RT: POST /v1/run (agent=portfolio,<br/>prior.analyst + analyst_handoff? + analyst_working_memory?)
   RT-->>API: {result: portfolio_result, trace}
   API->>DB: 存 workflow_step_results
 

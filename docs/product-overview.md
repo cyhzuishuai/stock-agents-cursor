@@ -1,15 +1,15 @@
 # 产品说明：美股策略驱动纸面交易多智能体系统
 
 **文档类型：** 产品说明（现状快照）  
-**日期：** 2026-07-28  
-**依据：** 当前已实现功能与已交付设计规格  
+**日期：** 2026-07-29  
+**依据：** 当前已实现功能与已交付设计规格（含 agent-runtime P0–P3）  
 **配套 PRD：** [`docs/prd.md`](./prd.md)
 
 ---
 
 ## 1. 产品定位
 
-本产品是一套**自托管**的美股 **Alpaca Paper** 纸面交易系统：由**激活策略**决定开盘前 / 盘中调度节奏与风控执行模式；Go API 负责编排、确定性风控与经纪商网关；单一 **agent-runtime**（Analyst + Portfolio LangGraph 工具循环）产出结构化分析与交易提案；Next.js 控制台提供总览、持仓、Runs、审批与设置。
+本产品是一套**自托管**的美股 **Alpaca Paper** 纸面交易系统：由**激活策略**决定开盘前 / 盘中调度节奏与风控执行模式；Go API 负责编排、确定性风控与经纪商网关；单一 **agent-runtime**（Analyst + Portfolio：**plan → act → reflect → finalize**，含 ModelRouter 与 run 内 handoff）产出结构化分析与交易提案；Next.js 控制台提供总览、持仓、Runs、审批与设置。
 
 一句话：**策略驱动节奏 → 多智能体提案 → Go 风控门控 → Alpaca Paper 成交权威 → 人工仅在需要时介入。**
 
@@ -46,15 +46,15 @@
 
 **系统默认策略「整体策略1」示例：** 开盘前 10 分钟（09:20 ET）；盘中 10:00–15:00 ET 每 60 分钟；`execution_mode=auto_reject_breaches`。
 
-### 3.2 Analyst → Portfolio 工具循环
+### 3.2 Analyst → Portfolio（plan / act / reflect）
 
-Go 注入 Alpaca 账户快照（现金 / 权益 / 持仓 / 未成交订单）与 `risk_context`，依次调用 **agent-runtime** 两次（`agent=analyst` → `agent=portfolio`）。每步返回 `{result, trace}`；Go 持久化完整 envelope，并将 `result` 传给下一步。Runs 详情可展开工具时间线（`trace.rounds`）。
+Go 注入 Alpaca 账户快照（现金 / 权益 / 持仓 / 未成交订单）与 `risk_context`，依次调用 **agent-runtime** 两次（`agent=analyst` → `agent=portfolio`）。每步返回完整 envelope（至少 `{result, trace}`）；Go 持久化后，将 Analyst **`result`** 写入 `prior_step_outputs.analyst`，并在存在时注入并列键 `analyst_handoff` / `analyst_working_memory` 供 Portfolio 消费。缺手交信息不导致失败。
 
-- 同一 run 内，Go 将 Analyst 的 `handoff` / `working_memory` 以 `prior_step_outputs.analyst_handoff` 与 `analyst_working_memory` 注入 Portfolio；`analyst` 仍为 result（含 `items`）。缺手交信息不导致失败。
+- Runs 详情可展开工具轮次（`trace.rounds`）与 **Agent 时间线**（`trace.events[]`）。
 
-Analyst 与 Portfolio 均走 **plan → act → reflect → finalize** 控制流：模型先产出分步计划（plan），按步调用工具（act），每步结束后反思（reflect）以决定继续、改计划或进入 finalize 输出结构化 JSON。trace 除 `rounds` 外还含 `plan`、`events[]` 与 `working_memory` 快照；Analyst envelope 可附带 `handoff` 供下游 Portfolio 使用。JSON 解析失败时在同一 provider 上 repair 重试，不切换 ModelRouter。
+Analyst 与 Portfolio 均走 **plan → act → reflect → finalize** 控制流：模型先产出分步计划（plan），按步调用工具（act），每步结束后反思（reflect）以决定继续、改计划或进入 finalize 输出结构化 JSON。trace 除 `rounds` 外还含 `plan`、`events[]`、`working_memory` 与 `router` 快照；Analyst envelope 可附带 `handoff`。JSON 解析失败时在同一 provider 上 repair 重试，不切换 ModelRouter。
 
-agent-runtime 通过 `LLM_MODE=mock|live` 切换 mock 与实模型；live 时由 ModelRouter 路由：主 provider（`LLM_PRIMARY_*`，默认 Volcengine Ark）失败一次后切至备用（`LLM_FALLBACK_*`，需显式设置 MiniMax `BASE_URL`）。Analyst 工具含日线行情、**Finnhub** 新闻、**Tavily** 网页搜索（缺 key 时优雅降级）、账户视图与风控上下文；Portfolio 工具含账户、风控、收盘价与 `size_proposals`。
+agent-runtime 通过 `LLM_MODE=mock|live` 切换 mock 与实模型；live 时由 ModelRouter 路由：主 provider（`LLM_PRIMARY_*`，默认 Volcengine Ark，模型可为 `ep-...` endpoint id）HTTP 失败后切至备用（`LLM_FALLBACK_*`，需显式设置 MiniMax `BASE_URL`）。Analyst 工具含日线行情、**Finnhub** 新闻、**Tavily** 网页搜索（缺 key 时优雅降级）、账户视图与风控上下文；Portfolio 工具含账户、风控、收盘价与 `size_proposals`（仍读 `analyst.items`；prompt 可参考 handoff / working_memory）。
 
 | 步骤 | Graph | 产出要点 |
 |------|--------|----------|
@@ -106,7 +106,7 @@ Agent-runtime **永不**调用 Alpaca Trading，也不直接改现金 / 持仓 /
 Web (Next.js, JWT)
   → Go API (Gin)：认证、调度、工作流、风控、审批、Alpaca 网关、可选 SSE
        → Alpaca Paper Trading / Market Data
-       → agent-runtime (Python)：Analyst → Portfolio 工具循环
+       → agent-runtime (Python)：Analyst → Portfolio plan/act/reflect
   PostgreSQL：编排与审计数据
   Redis：工作流 busy 锁、短时缓存等
 ```
@@ -115,7 +115,7 @@ Web (Next.js, JWT)
 |------|------|
 | `web` | 登录与交易台 UI |
 | `api` | 编排、风控、经纪商、策略调度 |
-| `agent-runtime` | Analyst + Portfolio LangGraph 工具循环（单进程，:8001） |
+| `agent-runtime` | Analyst + Portfolio LangGraph plan/act/reflect（单进程，:8001） |
 | `postgres` / `redis` | 持久化与锁/缓存 |
 
 部署以 Docker Compose 为主；本地 Web `http://localhost:3000`，API `http://localhost:8080`。细节见 [`deploy/README.md`](../deploy/README.md)。
@@ -138,7 +138,7 @@ Web (Next.js, JWT)
 
 ## 6. 典型一天（产品叙事）
 
-1. **开盘前**：激活策略在 09:20 ET（示例）触发 pre-open run；Analyst 工具循环分析观察列表 → Portfolio 产出提案 → Go 按模式门控 → 合规则提交 Alpaca。
+1. **开盘前**：激活策略在 09:20 ET（示例）触发 pre-open run；Analyst plan/act/reflect 分析观察列表 → handoff 注入 Portfolio → 产出提案 → Go 按模式门控 → 合规则提交 Alpaca。
 2. **盘中**：例如每小时再跑；同一账户不并行跑两次工作流（Redis 全局 busy 锁）。
 3. **人工**：若为 `require_approval` 且有超限，管理员在 Approvals 处理；也可随时 Run now 做冒烟或补跑。
 4. **配置**：在 Settings 切换策略节奏或 execution_mode、调整观察列表与阈值；调度热重载，无需重启容器（策略侧）。
@@ -178,6 +178,9 @@ Run 终态简述：`executed`（无待审且提案均已终态）、`awaiting_ap
 | [`README.md`](../README.md) | 快速启动与环境变量 |
 | [`deploy/README.md`](../deploy/README.md) | Compose、冒烟与 E2E |
 | [`docs/workflow-flowchart.md`](./workflow-flowchart.md) | 工作流与风控流程图 |
+| [`docs/superpowers/specs/2026-07-28-agent-runtime-plan-router-design.md`](./superpowers/specs/2026-07-28-agent-runtime-plan-router-design.md) | ModelRouter + plan/act/reflect + handoff（P0–P3，已交付） |
+| [`docs/superpowers/specs/2026-07-28-agent-runtime-p3-handoff-injection-design.md`](./superpowers/specs/2026-07-28-agent-runtime-p3-handoff-injection-design.md) | Go handoff / working_memory 注入细节 |
+| [`docs/superpowers/specs/2026-07-28-agent-runtime-tool-loop-design.md`](./superpowers/specs/2026-07-28-agent-runtime-tool-loop-design.md) | 两步 Agent 工具循环基线 |
 | [`docs/superpowers/specs/2026-07-28-remove-eod-naming-live-llm-design.md`](./superpowers/specs/2026-07-28-remove-eod-naming-live-llm-design.md) | 去除 EOD 命名与 live LLM 兼容 |
 | [`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`](./superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md) | V1 基线（部分已被后续规格取代） |
 | [`docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`](./superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md) | 策略调度与 Runs 可观测 |

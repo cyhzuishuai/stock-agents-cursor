@@ -2,8 +2,8 @@
 
 **产品：** 美股策略驱动纸面交易多智能体系统（stock-agents-cursor）  
 **版本：** 现状交付版（As-shipped）  
-**日期：** 2026-07-28  
-**状态：** 基于已实现功能整理；非前瞻愿景稿  
+**日期：** 2026-07-29  
+**状态：** 基于已实现功能整理；非前瞻愿景稿（含 agent-runtime P0–P3）  
 **产品说明：** [`docs/product-overview.md`](./product-overview.md)
 
 ---
@@ -17,7 +17,7 @@
 ### 1.2 产品目标
 
 1. 以**激活策略**配置交易节奏与执行模式，并驱动进程内调度。
-2. 固定流水线调用 **agent-runtime**（Analyst → Portfolio 工具循环），产出可审计的逐步结果与工具轨迹（`trace`）。
+2. 固定流水线调用 **agent-runtime**（Analyst → Portfolio：**plan → act → reflect → finalize**），产出可审计的逐步结果、工具轨迹与事件时间线（`trace`）；live 时 ModelRouter 主备 failover。
 3. 仅由 Go API 在门控通过（或 bypass / 人工批准）后向 **Alpaca Paper** 提交市价单。
 4. 提供单用户控制台：总览、持仓、Runs、审批、Settings。
 5. 全栈可通过 Docker Compose 一键拉起，并用冒烟 / API E2E 验证主路径。
@@ -28,12 +28,14 @@
 |----|------|----------|
 | S1 | 激活策略驱动 pre-open / intraday；热重载 | Settings 激活策略后调度行为变化；无激活策略无自动 tick |
 | S2 | 手动触发工作流可用 | UI Run now / `POST /api/v1/runs/trigger` / `POST /internal/runs/trigger` |
-| S3 | Analyst + Portfolio 两步 + 逐步 payload / trace 可查 | Run 详情 `steps[].payload_json`（含 `{result, trace}`） |
+| S3 | Analyst + Portfolio 两步 + 逐步 payload / trace 可查 | Run 详情 `steps[].payload_json`（含 `{result, trace}`，可选 `handoff` / `working_memory`） |
 | S4 | 三种 `execution_mode` 行为正确 | 超限 → 待审 / 拒绝 / 跳过风控 |
 | S5 | Alpaca 为 cash/positions/orders/fill 权威 | Overview/Portfolio/Orders 读经纪商；提案成交同步 |
 | S6 | Settings 可编辑观察列表与风控数值 | 增删符号、`can_hold`、PATCH risk key |
 | S7 | Compose + 密钥服务端 | `deploy/.env`；浏览器无 Alpaca 密钥 |
 | S8 | API E2E 主路径通过 | `deploy/e2e_api.ps1` / `.sh`（需 Paper 密钥） |
+| S9 | plan/act/reflect + ModelRouter + handoff 注入 | mock/live：`events[]`、主备路由字段；Go 注入 `analyst_handoff` / `analyst_working_memory` |
+| S10 | Runs 时间线 UI + 可选 LangSmith | 详情页 Agent timeline / Handoff 摘要；`LANGSMITH_TRACING` 默认关、fail-open |
 
 ---
 
@@ -44,11 +46,13 @@
 - 单管理员 JWT 认证
 - 策略库 CRUD（系统默认不可删；不可删激活中策略）、激活唯一、调度字段、三种执行模式
 - 策略调度（美东日历工作日假设；常规开盘 09:30 ET）+ 手动 run
-- agent-runtime Analyst → Portfolio 工具循环、Schema 校验失败则 run `failed` 且本 run 不向 Alpaca 提交
+- agent-runtime Analyst → Portfolio（plan/act/reflect/finalize）、Schema 校验失败则 run `failed` 且本 run 不向 Alpaca 提交
+- live：`LLM_PRIMARY_*` / `LLM_FALLBACK_*` ModelRouter（仅 HTTP 失败 failover）；可选 LangSmith 导出
+- 同一 run 内 Go 将 Analyst `handoff` / `working_memory` 注入 Portfolio 请求（并列键）；Risk/orders 仅用 `portfolio.result.proposals`
 - Go 风控规则评估（非 `bypass_risk`）
 - Alpaca Paper 下单与账户/持仓/订单展示；订单镜像入库
 - 人工审批（按笔）与 run 取消
-- Runs 列表/详情可观测（含 strategy、trigger、step payload）
+- Runs 列表/详情可观测（strategy、trigger、step payload、`trace.events` 时间线、handoff 摘要）
 - Settings：观察列表搜索/增删/`can_hold`；已有风控键改值；行情 provider 只读展示
 - 前端分层轮询；可选 SSE（可关闭）
 - Docker Compose 部署文档与冒烟/E2E 脚本
@@ -115,11 +119,22 @@
 | RUN-1 | 手动触发创建 run，`trigger=manual`，挂上当前激活 `strategy_id`（若有） | Runs API/UI 可见 |
 | RUN-2 | 调度触发分别标记 `pre_open` / `intraday` | 字段可查 |
 | RUN-3 | 同账户同时仅一个工作流执行 | Redis busy 锁；冲突则跳过/不并行 |
-| RUN-4 | 顺序执行 Analyst → Portfolio；每步 `{result, trace}` 入库 | 详情可见 step 状态与 payload |
-| RUN-5 | Agent/Schema/关键失败 → run `failed`，本 run 不向 Alpaca 提交 | 无部分假成交 |
-| RUN-6 | 终态：`executed` / `awaiting_approval` / `failed` / `cancelled` | 语义见产品说明 |
+| RUN-4 | 顺序执行 Analyst → Portfolio；每步完整 envelope 入库 | 详情可见 {result, trace}（及可选 handoff / working_memory） |
+| RUN-5 | Agent/Schema/基础设施失败 → run ailed，本 run 不向 Alpaca 提交 | 无部分假成交 |
+| RUN-6 | 终态：executed / waiting_approval / ailed / cancelled | 语义见产品说明 |
 | RUN-7 | 允许同一 run 内部分提案提交、部分拒绝或待审 | 与风控模式一致 |
 | RUN-8 | 可取消 run：取消待审；已提交订单保留 | Cancel API/UI |
+| RUN-9 | Portfolio 请求含 nalyst result 及可选 nalyst_handoff / nalyst_working_memory | 缺 handoff 不失败；sizing 仍读 nalyst.items |
+| RUN-10 | Run 详情展示 	race.events[] 时间线与 handoff 摘要 | 无 events 的历史 run 回退为 rounds |
+
+### 4.4a Agent runtime（LLM）
+
+| ID | 需求 | 验收 |
+|----|------|------|
+| AGT-1 | Analyst / Portfolio 使用 plan → act → reflect → finalize | mock 脚本与 	race.events / plan 可观测 |
+| AGT-2 | live：LLM_PRIMARY_* 主路由；HTTP 失败可切 LLM_FALLBACK_* | 	race / rounds 可见 provider / allback_used |
+| AGT-3 | JSON/schema 解析失败仅同模型 repair，不切换 provider | 行为与 ModelRouter 约束一致 |
+| AGT-4 | 可选 LangSmith：LANGSMITH_TRACING + API key；默认关；导出失败不阻断交易 | 关时本地 Runs 仍完整 |
 
 ### 4.5 风控、`can_hold` 与下单
 
@@ -166,10 +181,11 @@
 |----|------|------|
 | NFR-1 | 部署 | Docker Compose 可启动 web/api/agents/postgres/redis |
 | NFR-2 | 安全 | `JWT_SECRET`、Alpaca、LLM 密钥仅服务端；`.env` 不入库 |
-| NFR-3 | 可靠 | 工作流互斥；Agent 超时/有限重试后失败可观测 |
+| NFR-3 | 可靠 | 工作流互斥；Agent 超时（analyst≈600s / portfolio≈480s）/ 有限重试后失败可观测 |
 | NFR-4 | 性能（展示） | 账户/持仓短 TTL 缓存；开市轮询约 15–30s 量级（实现可微调） |
-| NFR-5 | 可测 | 单元/集成不依赖真实 Alpaca；可选本地 E2E 使用 Paper 密钥 |
+| NFR-5 | 可测 | 单元/集成不依赖真实 Alpaca；可选本地 E2E 使用 Paper 密钥；live LLM E2E 脚本可选 |
 | NFR-6 | 可运维 | `/healthz`；内部 token 触发；smoke / e2e 脚本 |
+| NFR-7 | 可观测 | 本地 `payload_json.trace` 为权威审计；LangSmith 为可选并行导出 |
 
 ---
 
@@ -189,7 +205,7 @@
 ## 7. 用户故事（摘要）
 
 1. **作为**管理员，**我希望**配置并激活一份策略，**以便**按美东开盘前与盘中节奏自动跑纸面交易工作流。
-2. **作为**管理员，**我希望**在 Run 详情看到每步 Agent 输出，**以便**理解为何产生某笔提案。
+2. **作为**管理员，**我希望**在 Run 详情看到每步 Agent 输出与时间线（plan/工具/reflect/handoff），**以便**理解为何产生某笔提案。
 3. **作为**管理员，**我希望**超限提案按模式自动拒绝或进入审批，**以便**在无人值守与人工把关之间切换。
 4. **作为**管理员，**我希望**总览与持仓反映 Alpaca Paper 真实账户，**以便**纸面结果可信。
 5. **作为**管理员，**我希望**编辑观察列表与「可持仓」开关，**以便**控制 Agent 宇宙与买入范围。
@@ -221,6 +237,7 @@
 | 健康检查 | `GET /healthz` |
 | 工作流冒烟 | `deploy/smoke_run.ps1` 或 `smoke_run.sh` |
 | API E2E | `deploy/e2e_api.ps1` 或 `e2e_api.sh`（需 Paper 密钥；覆盖 overview/portfolio/orders、strategies、手动 run 终态、approvals、settings、stream 503 等） |
+| Live LLM E2E（可选） | `deploy/e2e_api_live_llm.ps1`（需 `LLM_MODE=live` 与主备密钥；耗时长） |
 
 部署与环境变量说明：[`deploy/README.md`](../deploy/README.md)、根目录 [`README.md`](../README.md)。
 
@@ -234,7 +251,9 @@
 | 策略调度 + Runs 可观测 | `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md` |
 | Alpaca Paper 权威 | `docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md` |
 | Settings 观察列表 / 风控编辑 | `docs/superpowers/specs/2026-07-28-settings-watchlist-risk-edit-design.md` |
-| Agent runtime 工具循环 | `docs/superpowers/specs/2026-07-28-agent-runtime-tool-loop-design.md` |
+| Agent runtime 工具循环（两步基线） | `docs/superpowers/specs/2026-07-28-agent-runtime-tool-loop-design.md` |
+| Agent runtime plan/router/handoff（P0–P3，已交付） | `docs/superpowers/specs/2026-07-28-agent-runtime-plan-router-design.md` |
+| P3 handoff 注入细节 | `docs/superpowers/specs/2026-07-28-agent-runtime-p3-handoff-injection-design.md` |
 | 去除 EOD 命名 / live LLM | `docs/superpowers/specs/2026-07-28-remove-eod-naming-live-llm-design.md` |
 | Desk UI（日结/展示相关） | `docs/superpowers/specs/2026-07-27-day-settlement-desk-ui-design.md` |
 
@@ -245,3 +264,4 @@
 | 日期 | 说明 |
 |------|------|
 | 2026-07-28 | 初版：依据已实现功能整理为现状交付版 PRD |
+| 2026-07-29 | 同步 agent-runtime P0–P3：ModelRouter、plan/act/reflect、Runs 时间线/LangSmith、Go handoff 注入；增补 S9–S10、RUN-9/10、AGT-*、live E2E |

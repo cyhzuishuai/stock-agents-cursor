@@ -1,10 +1,11 @@
 # stock-agents-cursor
 
-美股 **策略驱动** 纸面交易多智能体系统：激活策略决定开盘前 / 盘中调度节奏与风控执行模式；Go API 编排与 Alpaca Paper 网关；**agent-runtime**（Analyst + Portfolio 工具循环）分析/提案；Next.js 总览、Runs 与审批。
+美股 **策略驱动** 纸面交易多智能体系统：激活策略决定开盘前 / 盘中调度节奏与风控执行模式；Go API 编排与 Alpaca Paper 网关；**agent-runtime**（Analyst + Portfolio：**plan → act → reflect → finalize**，ModelRouter + run 内 handoff）分析/提案；Next.js 总览、Runs 与审批。
 
 产品说明：`docs/product-overview.md`  
 产品 PRD：`docs/prd.md`  
 设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`（V1 基线；**调度节奏已由策略规格取代**）  
+Agent runtime（P0–P3 已交付）：`docs/superpowers/specs/2026-07-28-agent-runtime-plan-router-design.md`  
 策略调度：`docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`  
 Alpaca Paper 权威：`docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`  
 流程说明：`docs/workflow-flowchart.md`  
@@ -94,16 +95,17 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.override.ym
 
 工作流冒烟：`.\deploy\smoke_run.ps1` 或 `./deploy/smoke_run.sh`  
 API E2E（需先 `docker compose up --build`，且 `.env` 中配置 Alpaca Paper 密钥）：`.\deploy\e2e_api.ps1` 或 `./deploy/e2e_api.sh`  
+Live LLM E2E（可选，需 `LLM_MODE=live` 与主备密钥，耗时长）：`.\deploy\e2e_api_live_llm.ps1`
 
-E2E 覆盖：Alpaca overview / portfolio / orders、strategies、手动 run 终态、approvals、settings、stream（未开流式时期望 503）。本地最近一次：`e2e_api.ps1` **17/17 PASS**（2026-07-28）。详情见 `deploy/README.md`。
+E2E 覆盖：Alpaca overview / portfolio / orders、strategies、手动 run 终态、approvals、settings、stream（未开流式时期望 503）。详情见 `deploy/README.md`。
 
 ## 仓库结构（简要）
 
 ```text
 apps/web/              Next.js 前端
 services/api/          Go (Gin) API + Alpaca 网关 + 策略调度 + 工作流
-services/agents/runtime/  agent-runtime（Analyst + Portfolio 工具循环）
-services/agents/common/   共享工具、行情、LLM 客户端
+services/agents/runtime/  agent-runtime（Analyst + Portfolio plan/act/reflect）
+services/agents/common/   共享工具、行情、LLM / ModelRouter、可选 LangSmith
 packages/contracts/    JSON Schema / API DTO
 deploy/                Compose、env.example、.env（本地）、smoke / e2e 脚本
 ```

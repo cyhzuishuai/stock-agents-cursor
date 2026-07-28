@@ -1,7 +1,7 @@
 # Agent Runtime: Model Router + Plan/Act/Reflect + Observability — Design Spec
 
 **Date:** 2026-07-28  
-**Status:** Approved for implementation  
+**Status:** Delivered (P0–P3 merged to master as of 2026-07-29)  
 **Approach:** Domain agent runtime on LangGraph (custom plan/act/reflect orchestration; not a from-scratch graph engine)
 
 ## Goal
@@ -204,16 +204,16 @@ Top-level snapshots: final `plan`, `working_memory`, `router` summary.
 
 ## §6 Delivery, risks, success
 
-### PR sequence
+### PR sequence (completed)
 
-| PR | Scope | Verify |
+| PR | Scope | Status |
 |----|-------|--------|
-| P0 | ModelRouter + env + router fields on trace | Unit tests with mock transport; optional live smoke |
-| P1 | Plan/act/reflect for Analyst + Portfolio; mock scripts; parse repair | Graph unit + mock e2e |
-| P2 | `trace.events[]` + Runs timeline UI + LangSmith wiring | UI tests; tracing unit with mock client |
-| P3 | `handoff` schema + Go injection + run memory pass-through | Go workflow tests + contract fixtures |
+| P0 | ModelRouter + env + router fields on trace | Delivered |
+| P1 | Plan/act/reflect for Analyst + Portfolio; mock scripts; parse repair | Delivered |
+| P2 | `trace.events[]` + Runs timeline UI + LangSmith wiring | Delivered |
+| P3 | `handoff` + Go injection + run memory pass-through | Delivered |
 
-P1 may write a minimal `events[]` skeleton; UI and LangSmith remain P2.
+No P4 in this design. Product docs: `docs/prd.md` / `docs/product-overview.md`.
 
 ### Risks
 

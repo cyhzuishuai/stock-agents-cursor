@@ -6,7 +6,7 @@ Alpaca Paper is the source of truth for cash, equity, positions, orders, and fil
 
 ## Cadence (strategy-driven)
 
-Automatic runs come from the **active strategy** (pre-open + intraday jobs; hot-reload on activate/PATCH). Manual run: Web **Run now** or `POST /api/v1/runs/trigger` / `POST /internal/runs/trigger`. `EOD_CRON` is legacy-only when no DB strategy is active. Spec: `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`.
+Automatic runs come from the **active strategy** (pre-open + intraday jobs; hot-reload on activate/PATCH). Manual run: Web **Run now** or `POST /api/v1/runs/trigger` / `POST /internal/runs/trigger`. Spec: `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`.
 
 ## Environment file (`.env`)
 
@@ -28,7 +28,9 @@ Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, `ALPACA_API_KE
 | `INITIAL_CASH` | Offline/test seed only; live cash comes from Alpaca Paper account |
 | `AGENT_RUNTIME_URL` | Internal URL for Go → agent-runtime (Compose default `http://agent-runtime:8001`) |
 | `INTERNAL_RUN_TOKEN` | Required for `POST /internal/runs/trigger` (`X-Internal-Token` header) |
-| `LLM_MODE` | `mock` for local/CI (override sets this); `live` for real LLM (e.g. `MiniMax-M3`) |
+| `LLM_MODE` | `mock` for local/CI (override sets this); `live` for real LLM |
+| `LLM_PRIMARY_*` / `LLM_FALLBACK_*` | Recommended for live: Volcengine Ark primary + MiniMax fallback (HTTP failure only) |
+| `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | Legacy single-provider when `LLM_PRIMARY_*` unset |
 | `FINNHUB_API_KEY` | Optional; news tool degrades gracefully when missing |
 | `WEB_SEARCH_ENABLED` | Default `true`; set `false` to disable Tavily web search tool |
 | `WEB_SEARCH_PROVIDER` | Default `tavily` |
@@ -132,14 +134,26 @@ chmod +x e2e_api.sh && ./e2e_api.sh
 
 **Last verified (local):** 2026-07-28 — `e2e_api.ps1` **17/17 PASS** against Compose (`MARKET_DATA_PROVIDER=alpaca`, Paper keys set, stream disabled → 503). Sample manual run terminal status `executed`.
 
-## Spec gate notes (V1 + strategy cadence + Alpaca Phase 1)
+## Live LLM E2E (`e2e_api_live_llm`)
 
-Verified against design specs via unit tests (`go test ./...` in `services/api`, `pytest` in `services/agents/common`, Vitest in `apps/web`) and **live Compose E2E** (`deploy/e2e_api.ps1`, 2026-07-28).
+Optional long-running check with `LLM_MODE=live` (rebuild `agent-runtime` so Compose picks up `LLM_PRIMARY_*` / `LLM_FALLBACK_*` / optional `LANGSMITH_*`). Polls until terminal; analyst/portfolio step timeouts are ~600s / ~480s.
+
+```powershell
+# from repo root, stack up with live env
+powershell -File .\deploy\e2e_api_live_llm.ps1
+```
+
+Last verified (local): 2026-07-28 — live e2e **18/18 PASS** (`run_id=23`, Ark primary, `fallback_used_any=false`).
+
+## Spec gate notes (V1 + strategy cadence + Alpaca Phase 1 + agent-runtime P0–P3)
+
+Verified against design specs via unit tests (`go test ./...` in `services/api`, `pytest` in `services/agents`, Vitest in `apps/web`) and Compose E2E.
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Strategy schedule + manual trigger | Implemented | **DB active strategy is authoritative** (pre-open + intraday via `strategy.BuildJobSpecs`; hot-reload). `EOD_CRON` is **legacy only**. Manual: `POST /api/v1/runs/trigger` / `POST /internal/runs/trigger`; web **Run now**. |
-| agent-runtime / broker boundary | Implemented | Analyst + Portfolio tool-loops proposal-only; Go submits to Alpaca Paper after risk gate or `bypass_risk`. |
+| Strategy schedule + manual trigger | Implemented | **DB active strategy is authoritative** (pre-open + intraday; hot-reload). Manual: `POST /api/v1/runs/trigger` / `POST /internal/runs/trigger`; web **Run now**. |
+| agent-runtime / broker boundary | Implemented | Analyst + Portfolio **plan/act/reflect**; ModelRouter; Go injects handoff/memory; Go submits to Alpaca after risk gate or `bypass_risk`. |
+| Runs observability | Implemented | `trace.events[]` timeline + handoff summary; optional LangSmith (default off). |
 | Alpaca Paper authority | Implemented (Phase 1 + SSE client) | Bars, broker submit, Overview/Portfolio/Orders from Alpaca; tiered polling + optional JWT SSE. **E2E covered.** |
 | Portfolio fields | Mostly implemented | Cash/positions from Alpaca; local stop/TP when mirrored; concentration in Go risk. |
 | Risk + execution modes | Implemented | `require_approval`, `auto_reject_breaches`, `bypass_risk`. |

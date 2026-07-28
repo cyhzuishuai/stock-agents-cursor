@@ -1,8 +1,9 @@
 # P3 Handoff Injection + Run Memory Pass-through — Design Spec
 
 **Date:** 2026-07-28  
-**Status:** Approved for implementation  
-**Parent:** `docs/superpowers/specs/2026-07-28-agent-runtime-plan-router-design.md` (§4, §6 P3)
+**Status:** Delivered (merged to master as of 2026-07-29)  
+**Parent:** `docs/superpowers/specs/2026-07-28-agent-runtime-plan-router-design.md` (§4, §6 P3)  
+**Product docs:** `docs/prd.md`, `docs/product-overview.md`
 
 ## Goal
 
