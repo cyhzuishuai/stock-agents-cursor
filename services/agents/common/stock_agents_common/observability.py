@@ -53,20 +53,31 @@ def run_with_tracing(
 ) -> T:
     """Run ``fn`` under LangSmith when enabled; otherwise call ``fn`` directly.
 
-    Tracing setup/import failures are logged and ``fn`` still runs (fail-open).
-    Exceptions raised by ``fn`` itself are not swallowed.
+    Tracing setup/import/context-enter failures are logged and ``fn`` still runs
+    (fail-open). Exceptions raised by ``fn`` itself are not swallowed and ``fn``
+    is never invoked a second time after it has started.
 
     Note: this does not invent ``langsmith_run_url`` — view runs in the
     configured LangSmith project when tracing is enabled.
     """
     if not tracing_enabled():
         return fn()
+
+    started = False
+
+    def _tracked_fn() -> T:
+        nonlocal started
+        started = True
+        return fn()
+
     try:
-        runner = _enter_tracing(name, fn, metadata)
-    except Exception:  # noqa: BLE001 — fail-open: never block trading path
+        runner = _enter_tracing(name, _tracked_fn, metadata)
+        return runner()
+    except Exception:  # noqa: BLE001 — fail-open for tracing infra only
+        if started:
+            raise
         logger.warning(
             "LangSmith tracing setup failed; continuing without tracing",
             exc_info=True,
         )
         return fn()
-    return runner()

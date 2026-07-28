@@ -604,6 +604,9 @@ def _run_plan_loop_body(
                 validate(built, "agent_handoff")
                 handoff = built
 
+        # Spec event order: handoff before finalize on success.
+        if handoff:
+            _append_event(events, "handoff", handoff_preview=result_preview(handoff))
         _append_event(events, "finalize", ok=True, stop_reason=stop_reason)
         return {
             "result": result,
@@ -729,8 +732,6 @@ def _run_plan_loop_body(
     finalize_trace(trace, stop_reason)
     trace["usage"] = usage_totals
     trace["router"] = _build_router_snapshot(events, trace)
-    if handoff:
-        _append_event(events, "handoff", handoff_preview=result_preview(handoff))
     trace["events"] = events
     trace["plan"] = plan
     trace["working_memory"] = memory

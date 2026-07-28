@@ -115,6 +115,11 @@
         "reason": "ready"
       },
       {
+        "type": "handoff",
+        "at": "2026-07-22T14:00:11Z",
+        "handoff_preview": "{\"thesis_by_symbol\":{\"AAPL\":{\"summary\":\"Strong earnings...\",\"bias\":\"bull\",\"confidence\":0.72}}}"
+      },
+      {
         "type": "finalize",
         "at": "2026-07-22T14:00:12Z",
         "ok": true,
