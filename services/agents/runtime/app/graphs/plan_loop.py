@@ -22,6 +22,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from stock_agents_common.llm_tools import ToolLLMClient, extract_json_from_content
+from stock_agents_common.observability import run_with_tracing
 from stock_agents_common.schemas import validate
 from stock_agents_common.tools import RunContext
 from stock_agents_common.trace import append_round, finalize_trace, new_trace, result_preview
@@ -163,6 +164,48 @@ def run_plan_loop(
     build_handoff: Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run plan → act ⇄ tools → reflect → finalize; return agent_run_response envelope."""
+    return run_with_tracing(
+        f"plan_loop:{agent}",
+        lambda: _run_plan_loop_body(
+            agent=agent,
+            req=req,
+            system_plan=system_plan,
+            system_act=system_act,
+            system_reflect=system_reflect,
+            user_message=user_message,
+            tools_schema=tools_schema,
+            tool_registry=tool_registry,
+            result_schema=result_schema,
+            align_result=align_result,
+            baseline=baseline,
+            llm_client=llm_client,
+            ctx=ctx,
+            ensure_size_proposals=ensure_size_proposals,
+            build_handoff=build_handoff,
+        ),
+        metadata={"agent": agent},
+    )
+
+
+def _run_plan_loop_body(
+    *,
+    agent: str,
+    req: dict[str, Any],
+    system_plan: str,
+    system_act: str,
+    system_reflect: str,
+    user_message: str,
+    tools_schema: list[dict[str, Any]],
+    tool_registry: dict[str, ToolFn],
+    result_schema: str,
+    align_result: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
+    baseline: dict[str, Any] | None = None,
+    llm_client: ToolLLMClient | None = None,
+    ctx: RunContext | None = None,
+    ensure_size_proposals: bool = False,
+    build_handoff: Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Ungated plan-loop body (optional LangSmith wrap lives in ``run_plan_loop``)."""
     client = llm_client or ToolLLMClient()
     run_ctx = ctx or RunContext(req=req)
     max_rounds = max_rounds_for(agent, req)
