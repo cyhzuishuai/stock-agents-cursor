@@ -90,20 +90,20 @@ func (h *API) GetRun(c *gin.Context) {
 	})
 }
 
-type eodRequest struct {
+type triggerRunRequest struct {
 	TradeDate string `json:"trade_date"`
 	Force     bool   `json:"force"`
 }
 
-func (h *API) PostEOD(c *gin.Context) {
-	var req eodRequest
+func (h *API) PostTriggerRun(c *gin.Context) {
+	var req triggerRunRequest
 	_ = c.ShouldBindJSON(&req)
 	tradeDate := req.TradeDate
 	if tradeDate == "" {
 		tradeDate = defaultTradeDate()
 	}
 	force := req.Force || queryForce(c)
-	h.triggerEOD(c, tradeDate, force)
+	h.triggerRun(c, tradeDate, force)
 }
 
 func queryForce(c *gin.Context) bool {

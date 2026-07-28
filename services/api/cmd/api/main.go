@@ -61,7 +61,7 @@ func main() {
 
 	approvalsSvc := &approvals.Service{DB: gormDB, Ledger: ledgerSvc, Broker: brokerClient}
 
-	var eodRunner httpserver.EODRunner
+	var workflowRunner httpserver.WorkflowRunner
 	if cfg.RedisURL != "" {
 		opt, err := redis.ParseURL(cfg.RedisURL)
 		if err != nil {
@@ -69,7 +69,7 @@ func main() {
 			os.Exit(1)
 		}
 		rdb := redis.NewClient(opt)
-		eodRunner = &workflow.Runner{
+		workflowRunner = &workflow.Runner{
 			DB: gormDB,
 			Agents: &agentsclient.Client{
 				RuntimeURL:   cfg.AgentRuntimeURL,
@@ -94,9 +94,9 @@ func main() {
 	strategySvc := &strategy.Service{DB: gormDB}
 	var schedReloader httpserver.SchedulerReloader = httpserver.NoopSchedulerReloader{}
 
-	if eodRunner != nil {
+	if workflowRunner != nil {
 		sched, err := scheduler.New(scheduler.Options{
-			Runner:   eodRunner,
+			Runner:   workflowRunner,
 			Location: scheduler.NewYorkLocation(),
 			Source:   strategySvc,
 		})
@@ -124,7 +124,7 @@ func main() {
 	router := httpserver.NewRouter(httpserver.RouterDeps{
 		DB:           gormDB,
 		JWTSecret:    cfg.JWTSecret,
-		Runner:       eodRunner,
+		Runner:       workflowRunner,
 		Approvals:    approvalsSvc,
 		Ledger:       ledgerSvc,
 		Config:       cfg,

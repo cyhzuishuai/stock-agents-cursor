@@ -78,7 +78,7 @@ type recordingRunner struct {
 	err    error
 }
 
-func (r *recordingRunner) RunEOD(_ context.Context, params workflow.RunParams) (uint, error) {
+func (r *recordingRunner) RunWorkflow(_ context.Context, params workflow.RunParams) (uint, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.params = append(r.params, params)

@@ -23,16 +23,16 @@ var (
 	ErrInvalidPortfolioSchema = errors.New("invalid portfolio_result schema")
 )
 
-// RunParams configures a single EOD workflow execution.
+// RunParams configures a single workflow execution.
 type RunParams struct {
 	TradeDate     string
 	Force         bool // retained for API compat; no longer blocks same-day sequential runs
 	StrategyID    *uint
-	Trigger       string // manual|pre_open|intraday|legacy_eod
+	Trigger       string // manual|pre_open|intraday
 	ExecutionMode string // empty → require_approval (or strategy if StrategyID set)
 }
 
-// LedgerAPI is the ledger surface used by the EOD runner.
+// LedgerAPI is the ledger surface used by the workflow runner.
 type LedgerAPI interface {
 	AccountSnapshot(ctx context.Context, accountID uint) (ledger.AccountSnapshot, error)
 	ApplyFill(ctx context.Context, req ledger.FillRequest) (models.Order, error)
@@ -79,8 +79,8 @@ type portfolioResult struct {
 	Proposals []portfolioProposal `json:"proposals"`
 }
 
-func (r *Runner) RunEOD(ctx context.Context, params RunParams) (runID uint, err error) {
-	unlock, err := AcquireEODLock(ctx, r.Redis, DefaultLockTTL)
+func (r *Runner) RunWorkflow(ctx context.Context, params RunParams) (runID uint, err error) {
+	unlock, err := AcquireWorkflowLock(ctx, r.Redis, DefaultLockTTL)
 	if err != nil {
 		return 0, err
 	}
@@ -101,7 +101,7 @@ func (r *Runner) RunEOD(ctx context.Context, params RunParams) (runID uint, err 
 		return 0, fmt.Errorf("create workflow run: %w", err)
 	}
 
-	return run.ID, r.runEOD(ctx, &run, mode)
+	return run.ID, r.runWorkflow(ctx, &run, mode)
 }
 
 func (r *Runner) resolveExecutionMode(ctx context.Context, params RunParams) (string, error) {
@@ -120,8 +120,8 @@ func (r *Runner) resolveExecutionMode(ctx context.Context, params RunParams) (st
 	return ExecutionModeRequireApproval, nil
 }
 
-func (r *Runner) runEOD(ctx context.Context, run *models.WorkflowRun, executionMode string) error {
-	marks, anyFill, err := r.runEODThroughFills(ctx, run, executionMode)
+func (r *Runner) runWorkflow(ctx context.Context, run *models.WorkflowRun, executionMode string) error {
+	marks, anyFill, err := r.runWorkflowThroughFills(ctx, run, executionMode)
 	if err != nil {
 		if anyFill {
 			_ = r.finalizeAfterPartialFill(ctx, run, err)
@@ -217,7 +217,7 @@ func (r *Runner) finalizeAfterPartialFill(ctx context.Context, run *models.Workf
 	}).Error
 }
 
-func (r *Runner) runEODThroughFills(ctx context.Context, run *models.WorkflowRun, executionMode string) (map[string]float64, bool, error) {
+func (r *Runner) runWorkflowThroughFills(ctx context.Context, run *models.WorkflowRun, executionMode string) (map[string]float64, bool, error) {
 	account, err := r.loadAccount(ctx)
 	if err != nil {
 		return nil, false, err
@@ -480,7 +480,7 @@ func validatePortfolioResult(raw []byte) error {
 	return nil
 }
 
-// fillNotionalAndCashImpact recomputes gate inputs from qty × fill price (EOD close).
+// fillNotionalAndCashImpact recomputes gate inputs from qty × fill price.
 func fillNotionalAndCashImpact(side string, qty, fillPrice float64) (notional, cashImpact float64) {
 	notional = qty * fillPrice
 	switch side {

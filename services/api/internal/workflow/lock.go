@@ -8,12 +8,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const eodBusyLockKey = "eod:run:lock:busy"
+const workflowBusyLockKey = "workflow:run:lock:busy"
 
-var ErrLockHeld = errors.New("eod run lock held")
+var ErrLockHeld = errors.New("workflow run lock held")
 
-func AcquireEODLock(ctx context.Context, rdb redis.Cmdable, ttl time.Duration) (unlock func(), err error) {
-	ok, err := rdb.SetNX(ctx, eodBusyLockKey, "1", ttl).Result()
+func AcquireWorkflowLock(ctx context.Context, rdb redis.Cmdable, ttl time.Duration) (unlock func(), err error) {
+	ok, err := rdb.SetNX(ctx, workflowBusyLockKey, "1", ttl).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -21,6 +21,6 @@ func AcquireEODLock(ctx context.Context, rdb redis.Cmdable, ttl time.Duration) (
 		return nil, ErrLockHeld
 	}
 	return func() {
-		_ = rdb.Del(context.Background(), eodBusyLockKey).Err()
+		_ = rdb.Del(context.Background(), workflowBusyLockKey).Err()
 	}, nil
 }

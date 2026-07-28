@@ -209,7 +209,7 @@ func setupStreamRouter(t *testing.T, hub *stream.Hub) (*gin.Engine, *gorm.DB, st
 		RiskMaxSingleNameWeight: 0.20,
 		RiskMinCashRatio:        0.10,
 		MarketDataProvider:      "free",
-		InternalEODToken:        "internal-secret",
+		InternalRunToken:        "internal-secret",
 		JWTSecret:               "test-jwt-secret",
 	}
 	if err := db.Seed(gormDB, cfg); err != nil {

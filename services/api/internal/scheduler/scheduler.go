@@ -1,7 +1,7 @@
 // Package scheduler triggers workflow runs from the active strategy schedule in US/Eastern.
 //
 // Jobs are derived via strategy.BuildJobSpecs (pre-open + intraday). Hot-reload on
-// activate/PATCH replaces cron entries. EOD_CRON is legacy-only (see deploy/README.md);
+// activate/PATCH replaces cron entries. LEGACY_FALLBACK_CRON is legacy-only (see deploy/README.md);
 // with no active strategy the scheduler registers no automatic ticks.
 package scheduler
 
@@ -26,9 +26,9 @@ const (
 	DefaultCronExpr = "30 16 * * 1-5"
 )
 
-// EODRunner runs a strategy workflow tick (manual or scheduled). Name is historical.
-type EODRunner interface {
-	RunEOD(ctx context.Context, params workflow.RunParams) (uint, error)
+// WorkflowRunner runs a strategy workflow tick (manual or scheduled).
+type WorkflowRunner interface {
+	RunWorkflow(ctx context.Context, params workflow.RunParams) (uint, error)
 }
 
 // StrategySource loads the currently active strategy (nil if none).
@@ -38,7 +38,7 @@ type StrategySource interface {
 
 // Options configures the strategy-driven scheduler.
 type Options struct {
-	Runner   EODRunner
+	Runner   WorkflowRunner
 	Location *time.Location
 	Now      func() time.Time
 	Source   StrategySource
@@ -46,7 +46,7 @@ type Options struct {
 
 // Scheduler runs workflow ticks from the active strategy under a mutex-guarded cron.
 type Scheduler struct {
-	runner EODRunner
+	runner WorkflowRunner
 	loc    *time.Location
 	now    func() time.Time
 	source StrategySource
@@ -54,9 +54,9 @@ type Scheduler struct {
 	cron   *cron.Cron
 }
 
-// CronExprFromEnv returns EOD_CRON or DefaultCronExpr (legacy; DB strategy is authoritative).
+// CronExprFromEnv returns LEGACY_FALLBACK_CRON or DefaultCronExpr (legacy; DB strategy is authoritative).
 func CronExprFromEnv() string {
-	if v := os.Getenv("EOD_CRON"); v != "" {
+	if v := os.Getenv("LEGACY_FALLBACK_CRON"); v != "" {
 		return v
 	}
 	return DefaultCronExpr
@@ -169,7 +169,7 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 func (s *Scheduler) runJob(ctx context.Context, strategyID uint, trigger, executionMode string) {
 	now := s.now()
 	sid := strategyID
-	_, err := s.runner.RunEOD(ctx, workflow.RunParams{
+	_, err := s.runner.RunWorkflow(ctx, workflow.RunParams{
 		TradeDate:     TradeDate(now, s.loc),
 		StrategyID:    &sid,
 		Trigger:       trigger,
@@ -182,7 +182,7 @@ func (s *Scheduler) runJob(ctx context.Context, strategyID uint, trigger, execut
 		fmt.Fprintf(os.Stderr, "scheduler: skip (lock held): %v\n", err)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "scheduler: eod run: %v\n", err)
+	fmt.Fprintf(os.Stderr, "scheduler: workflow run: %v\n", err)
 }
 
 // Start performs an initial Reload then blocks until ctx is cancelled.

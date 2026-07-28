@@ -65,7 +65,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			authed.GET("/stream/market", api.StreamMarket)
 			authed.GET("/stream/account", api.StreamAccount)
 			authed.GET("/runs", api.ListRuns)
-			authed.POST("/runs/eod", api.PostEOD)
+			authed.POST("/runs/trigger", api.PostTriggerRun)
 			authed.GET("/runs/:id", api.GetRun)
 			authed.POST("/runs/:id/cancel", approvalHandlers.CancelRun)
 			authed.GET("/approvals", api.ListApprovals)
@@ -85,7 +85,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		}
 	}
 
-	router.POST("/internal/eod/run", api.InternalEOD)
+	router.POST("/internal/runs/trigger", api.InternalTriggerRun)
 
 	return router
 }

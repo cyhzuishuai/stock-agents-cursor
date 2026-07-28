@@ -24,7 +24,7 @@ type Config struct {
 	AgentDecisionURL        string
 	AgentPortfolioURL       string
 	AgentRiskURL            string
-	InternalEODToken        string
+	InternalRunToken        string
 	MarketDataProvider      string
 	AlpacaAPIKey            string
 	AlpacaAPISecret         string
@@ -87,7 +87,7 @@ func Load() (*Config, error) {
 		AgentDecisionURL:        os.Getenv("AGENT_DECISION_URL"),
 		AgentPortfolioURL:       os.Getenv("AGENT_PORTFOLIO_URL"),
 		AgentRiskURL:            os.Getenv("AGENT_RISK_URL"),
-		InternalEODToken:        os.Getenv("INTERNAL_EOD_TOKEN"),
+		InternalRunToken:        os.Getenv("INTERNAL_RUN_TOKEN"),
 		MarketDataProvider:      os.Getenv("MARKET_DATA_PROVIDER"),
 		AlpacaAPIKey:            os.Getenv("ALPACA_API_KEY"),
 		AlpacaAPISecret:         os.Getenv("ALPACA_API_SECRET"),

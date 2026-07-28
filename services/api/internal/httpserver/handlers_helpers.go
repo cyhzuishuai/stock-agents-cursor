@@ -16,9 +16,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// EODRunner triggers a strategy workflow run (manual or scheduled). Name is historical.
-type EODRunner interface {
-	RunEOD(ctx context.Context, params workflow.RunParams) (uint, error)
+// WorkflowRunner triggers a strategy workflow run (manual or scheduled).
+type WorkflowRunner interface {
+	RunWorkflow(ctx context.Context, params workflow.RunParams) (uint, error)
 }
 
 // SchedulerReloader hot-reloads scheduler jobs from the active strategy.
@@ -35,7 +35,7 @@ func (NoopSchedulerReloader) Reload(context.Context) error { return nil }
 type RouterDeps struct {
 	DB           *gorm.DB
 	JWTSecret    string
-	Runner       EODRunner
+	Runner       WorkflowRunner
 	Approvals    *approvals.Service
 	Ledger       *ledger.Service
 	Config       *config.Config
@@ -51,7 +51,7 @@ type RouterDeps struct {
 type API struct {
 	DB           *gorm.DB
 	JWTSecret    string
-	Runner       EODRunner
+	Runner       WorkflowRunner
 	Approvals    *approvals.Service
 	Ledger       *ledger.Service
 	Config       *config.Config
@@ -71,9 +71,9 @@ func (h *API) requireBroker(c *gin.Context) bool {
 	return true
 }
 
-func (h *API) triggerEOD(c *gin.Context, tradeDate string, force bool) {
+func (h *API) triggerRun(c *gin.Context, tradeDate string, force bool) {
 	if h.Runner == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "eod runner not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "workflow runner not configured"})
 		return
 	}
 	params := workflow.RunParams{
@@ -92,7 +92,7 @@ func (h *API) triggerEOD(c *gin.Context, tradeDate string, force bool) {
 			// ExecutionMode left empty so runner resolves from strategy row.
 		}
 	}
-	runID, err := h.Runner.RunEOD(c.Request.Context(), params)
+	runID, err := h.Runner.RunWorkflow(c.Request.Context(), params)
 	if err != nil {
 		resp := gin.H{"error": err.Error()}
 		if runID != 0 {

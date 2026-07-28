@@ -118,19 +118,19 @@ func (f *fakeBroker) submitCount() int {
 
 const tradeDate = "2026-07-22"
 
-func eodParams(td string) workflow.RunParams {
+func workflowParams(td string) workflow.RunParams {
 	return workflow.RunParams{TradeDate: td}
 }
 
-func TestRunEODHappyPathAutoExecBuy(t *testing.T) {
+func TestRunWorkflowHappyPathAutoExecBuy(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
 
-	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 	if runID == 0 {
 		t.Fatal("expected non-zero runID")
@@ -211,14 +211,14 @@ func TestRunEODHappyPathAutoExecBuy(t *testing.T) {
 	}
 }
 
-func TestRunEODAgentFailureMidChainNoFills(t *testing.T) {
+func TestRunWorkflowAgentFailureMidChainNoFills(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 		failAt:    workflow.StepPortfolio,
 	})
 
-	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
 	if err == nil {
 		t.Fatal("expected error from failed agent")
 	}
@@ -262,18 +262,18 @@ func TestRunEODAgentFailureMidChainNoFills(t *testing.T) {
 	}
 }
 
-func TestRunEODBreachCreatesPendingApprovalNoFill(t *testing.T) {
+func TestRunWorkflowBreachCreatesPendingApprovalNoFill(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000,
 	})
 
-	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	runID, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate:     tradeDate,
 		ExecutionMode: workflow.ExecutionModeRequireApproval,
 	})
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 
 	var run models.WorkflowRun
@@ -332,7 +332,7 @@ func TestRunEODBreachCreatesPendingApprovalNoFill(t *testing.T) {
 	}
 }
 
-func TestRunEODUnderstatedNotionalStillBreachesMaxOrder(t *testing.T) {
+func TestRunWorkflowUnderstatedNotionalStillBreachesMaxOrder(t *testing.T) {
 	// Agent understates notional (100) but qty*broker_mark = 100*191 = 19100 > max 10000.
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
@@ -340,9 +340,9 @@ func TestRunEODUnderstatedNotionalStillBreachesMaxOrder(t *testing.T) {
 	})
 	env.broker.pos = []broker.Position{{Symbol: "AAPL", Qty: 0, CurrentPrice: 191}}
 
-	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 
 	var run models.WorkflowRun
@@ -392,7 +392,7 @@ func TestRunEODUnderstatedNotionalStillBreachesMaxOrder(t *testing.T) {
 	}
 }
 
-func TestRunEODResolvesExecutionModeFromStrategyDB(t *testing.T) {
+func TestRunWorkflowResolvesExecutionModeFromStrategyDB(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000,
@@ -407,14 +407,14 @@ func TestRunEODResolvesExecutionModeFromStrategyDB(t *testing.T) {
 		t.Fatalf("create strategy: %v", err)
 	}
 
-	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	runID, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate:  tradeDate,
 		StrategyID: &st.ID,
 		Trigger:    workflow.TriggerManual,
 		// ExecutionMode intentionally empty — runner must load from DB.
 	})
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 
 	var run models.WorkflowRun
@@ -442,21 +442,21 @@ func TestRunEODResolvesExecutionModeFromStrategyDB(t *testing.T) {
 	}
 }
 
-func TestRunEODAutoRejectBreachesRejectsProposalNoApproval(t *testing.T) {
+func TestRunWorkflowAutoRejectBreachesRejectsProposalNoApproval(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000,
 	})
 
 	sid := uint(1)
-	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	runID, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate:     tradeDate,
 		StrategyID:    &sid,
 		Trigger:       workflow.TriggerManual,
 		ExecutionMode: workflow.ExecutionModeAutoReject,
 	})
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 
 	var run models.WorkflowRun
@@ -505,7 +505,7 @@ func TestRunEODAutoRejectBreachesRejectsProposalNoApproval(t *testing.T) {
 	}
 }
 
-func TestRunEODMidFillFailureSetsTerminalFailed(t *testing.T) {
+func TestRunWorkflowMidFillFailureSetsTerminalFailed(t *testing.T) {
 	// First symbol auto-fills; second symbol missing mark (no broker price, zero notional).
 	env := setupRunnerEnv(t, stubResponses{
 		analyst: analystResultJSON(),
@@ -516,7 +516,7 @@ func TestRunEODMidFillFailureSetsTerminalFailed(t *testing.T) {
 		t.Fatalf("seed MSFT: %v", err)
 	}
 
-	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
 	if err == nil {
 		t.Fatal("expected mid-fill error")
 	}
@@ -559,25 +559,25 @@ func TestRunEODMidFillFailureSetsTerminalFailed(t *testing.T) {
 	}
 }
 
-func TestRunEODAllowsSecondRunSameTradeDate(t *testing.T) {
+func TestRunWorkflowAllowsSecondRunSameTradeDate(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
 
-	id1, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	id1, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate: tradeDate,
 		Trigger:   workflow.TriggerPreOpen,
 	})
 	if err != nil {
-		t.Fatalf("first RunEOD: %v", err)
+		t.Fatalf("first RunWorkflow: %v", err)
 	}
-	id2, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	id2, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate: tradeDate,
 		Trigger:   workflow.TriggerIntraday,
 	})
 	if err != nil {
-		t.Fatalf("second RunEOD: %v", err)
+		t.Fatalf("second RunWorkflow: %v", err)
 	}
 	if id1 == 0 || id2 == 0 || id1 == id2 {
 		t.Fatalf("expected two distinct run IDs, got %d and %d", id1, id2)
@@ -592,13 +592,13 @@ func TestRunEODAllowsSecondRunSameTradeDate(t *testing.T) {
 	}
 }
 
-func TestRunEODInvalidPortfolioSchemaNoFills(t *testing.T) {
+func TestRunWorkflowInvalidPortfolioSchemaNoFills(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: envelopeJSON(`{"warnings":[]}`), // missing proposals,
 	})
 
-	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
 	if err == nil {
 		t.Fatal("expected schema validation error")
 	}
@@ -630,7 +630,7 @@ func TestRunEODInvalidPortfolioSchemaNoFills(t *testing.T) {
 	}
 }
 
-func TestRunEODNAVFailurePreservesExecutedStatus(t *testing.T) {
+func TestRunWorkflowNAVFailurePreservesExecutedStatus(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
@@ -641,7 +641,7 @@ func TestRunEODNAVFailurePreservesExecutedStatus(t *testing.T) {
 	env.broker.acctErr = errors.New("account unavailable")
 	env.broker.acctFailAfter = 3 // snapshot + portfolioState before/after fill; upsertNAV fails
 
-	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
 	if err == nil {
 		t.Fatal("expected UpsertNAV error")
 	}
@@ -803,7 +803,7 @@ func portfolioSellJSON(qty, notional, cashImpact float64) string {
 	))
 }
 
-func TestRunEODBuyRejectedWhenNotHoldable(t *testing.T) {
+func TestRunWorkflowBuyRejectedWhenNotHoldable(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
@@ -812,9 +812,9 @@ func TestRunEODBuyRejectedWhenNotHoldable(t *testing.T) {
 		t.Fatalf("set can_hold: %v", err)
 	}
 
-	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 
 	var proposals []models.TradeProposal
@@ -840,7 +840,7 @@ func TestRunEODBuyRejectedWhenNotHoldable(t *testing.T) {
 	}
 }
 
-func TestRunEODSellAllowedWhenNotHoldable(t *testing.T) {
+func TestRunWorkflowSellAllowedWhenNotHoldable(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioSellJSON(5, 955, 955),
@@ -852,9 +852,9 @@ func TestRunEODSellAllowedWhenNotHoldable(t *testing.T) {
 	env.broker.pos = []broker.Position{{Symbol: "AAPL", Qty: 10, AvgCost: 180, CurrentPrice: 191}}
 	env.broker.acct = broker.Account{ID: "paper", Cash: 80890, Equity: 100000, PortfolioValue: 100000}
 
-	runID, err := env.runner.RunEOD(context.Background(), eodParams(tradeDate))
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 
 	var proposals []models.TradeProposal
@@ -880,19 +880,19 @@ func TestRunEODSellAllowedWhenNotHoldable(t *testing.T) {
 	}
 }
 
-func TestRunEODBypassRiskSubmitsWithoutRisk(t *testing.T) {
+func TestRunWorkflowBypassRiskSubmitsWithoutRisk(t *testing.T) {
 	// qty*close = 100*191 = 19100 > max_order_notional 10000 — would always breach.
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100),
 	})
 
-	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	runID, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate:     tradeDate,
 		ExecutionMode: workflow.ExecutionModeBypassRisk,
 	})
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 
 	if env.broker.submitCount() != 1 {
@@ -916,18 +916,18 @@ func TestRunEODBypassRiskSubmitsWithoutRisk(t *testing.T) {
 	}
 }
 
-func TestRunEODAutoRejectStillRejects(t *testing.T) {
+func TestRunWorkflowAutoRejectStillRejects(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100),
 	})
 
-	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	runID, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate:     tradeDate,
 		ExecutionMode: workflow.ExecutionModeAutoReject,
 	})
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 
 	if env.broker.submitCount() != 0 {
@@ -943,18 +943,18 @@ func TestRunEODAutoRejectStillRejects(t *testing.T) {
 	}
 }
 
-func TestRunEODRequireApprovalDoesNotSubmit(t *testing.T) {
+func TestRunWorkflowRequireApprovalDoesNotSubmit(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100),
 	})
 
-	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	runID, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate:     tradeDate,
 		ExecutionMode: workflow.ExecutionModeRequireApproval,
 	})
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 
 	if env.broker.submitCount() != 0 {
@@ -978,18 +978,18 @@ func TestRunEODRequireApprovalDoesNotSubmit(t *testing.T) {
 	}
 }
 
-func TestRunEODPassSubmitsToBroker(t *testing.T) {
+func TestRunWorkflowPassSubmitsToBroker(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
 
-	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	runID, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate:     tradeDate,
 		ExecutionMode: workflow.ExecutionModeRequireApproval,
 	})
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 
 	if env.broker.submitCount() != 1 {
@@ -1016,14 +1016,14 @@ func TestRunEODPassSubmitsToBroker(t *testing.T) {
 	}
 }
 
-func TestRunEODNilBrokerWithSubmitFailsRun(t *testing.T) {
+func TestRunWorkflowNilBrokerWithSubmitFailsRun(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
 	env.runner.Broker = nil
 
-	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	runID, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate:     tradeDate,
 		ExecutionMode: workflow.ExecutionModeBypassRisk,
 	})
@@ -1051,7 +1051,7 @@ func TestRunEODNilBrokerWithSubmitFailsRun(t *testing.T) {
 	}
 }
 
-func TestRunEODSubmitOrderErrorRejectsAndContinues(t *testing.T) {
+func TestRunWorkflowSubmitOrderErrorRejectsAndContinues(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: envelopeJSON(`{"proposals":[{"symbol":"AAPL","side":"buy","qty":5,"estimated_notional":955,"estimated_cash_impact":-955},{"symbol":"AAPL","side":"buy","qty":5,"estimated_notional":955,"estimated_cash_impact":-955}],"warnings":[]}`),
@@ -1083,12 +1083,12 @@ func TestRunEODSubmitOrderErrorRejectsAndContinues(t *testing.T) {
 		return o, nil
 	}
 
-	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	runID, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate:     tradeDate,
 		ExecutionMode: workflow.ExecutionModeBypassRisk,
 	})
 	if err != nil {
-		t.Fatalf("RunEOD: %v", err)
+		t.Fatalf("RunWorkflow: %v", err)
 	}
 	if env.broker.submitCount() != 2 {
 		t.Fatalf("SubmitOrder calls: got %d want 2", env.broker.submitCount())
@@ -1120,14 +1120,14 @@ func TestRunEODSubmitOrderErrorRejectsAndContinues(t *testing.T) {
 	}
 }
 
-func TestRunEODPostSubmitGetOrderErrorKeepsSubmitted(t *testing.T) {
+func TestRunWorkflowPostSubmitGetOrderErrorKeepsSubmitted(t *testing.T) {
 	env := setupRunnerEnv(t, stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
 	env.broker.getErr = errors.New("alpaca get order unavailable")
 
-	runID, err := env.runner.RunEOD(context.Background(), workflow.RunParams{
+	runID, err := env.runner.RunWorkflow(context.Background(), workflow.RunParams{
 		TradeDate:     tradeDate,
 		ExecutionMode: workflow.ExecutionModeBypassRisk,
 	})

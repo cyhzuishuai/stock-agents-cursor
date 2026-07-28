@@ -30,7 +30,7 @@ type stubRunner struct {
 	err        error
 }
 
-func (s *stubRunner) RunEOD(_ context.Context, params workflow.RunParams) (uint, error) {
+func (s *stubRunner) RunWorkflow(_ context.Context, params workflow.RunParams) (uint, error) {
 	s.lastParams = params
 	if s.runID == 0 {
 		s.runID = 42
@@ -114,7 +114,7 @@ func setupAPIWithBroker(t *testing.T, br broker.Client, scheduler httpserver.Sch
 		RiskMaxSingleNameWeight: 0.20,
 		RiskMinCashRatio:        0.10,
 		MarketDataProvider:      "free",
-		InternalEODToken:        "internal-secret",
+		InternalRunToken:        "internal-secret",
 		JWTSecret:               "test-jwt-secret",
 	}
 	if err := db.Seed(gormDB, cfg); err != nil {
@@ -471,7 +471,7 @@ func TestOverviewPortfolioRunsSettingsSmoke(t *testing.T) {
 	})
 }
 
-func TestRunsDetailAndEODAndCancel(t *testing.T) {
+func TestRunsDetailAndTriggerAndCancel(t *testing.T) {
 	router, gormDB, secret, runner, _ := setupAPI(t)
 	token := bearerToken(t, secret, gormDB)
 
@@ -563,9 +563,9 @@ func TestRunsDetailAndEODAndCancel(t *testing.T) {
 		}
 	})
 
-	t.Run("post eod", func(t *testing.T) {
+	t.Run("post trigger", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{"trade_date": "2026-07-24"})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/eod", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/trigger", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -598,7 +598,7 @@ func TestRunsDetailAndEODAndCancel(t *testing.T) {
 		}
 	})
 
-	t.Run("post eod failure includes run_id", func(t *testing.T) {
+	t.Run("post trigger failure includes run_id", func(t *testing.T) {
 		runner.err = errors.New("mid-fill boom")
 		runner.runID = 77
 		t.Cleanup(func() {
@@ -606,7 +606,7 @@ func TestRunsDetailAndEODAndCancel(t *testing.T) {
 			runner.runID = 99
 		})
 		body, _ := json.Marshal(map[string]string{"trade_date": "2026-07-26"})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/eod", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/trigger", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -717,11 +717,11 @@ func TestApprovalsListAndDecide(t *testing.T) {
 	})
 }
 
-func TestInternalEODRequiresToken(t *testing.T) {
+func TestInternalTriggerRunRequiresToken(t *testing.T) {
 	router, _, _, runner, cfg := setupAPI(t)
 
 	t.Run("unauthorized without token", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/internal/eod/run", bytes.NewReader([]byte(`{}`)))
+		req := httptest.NewRequest(http.MethodPost, "/internal/runs/trigger", bytes.NewReader([]byte(`{}`)))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -732,9 +732,9 @@ func TestInternalEODRequiresToken(t *testing.T) {
 
 	t.Run("success with internal token", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{"trade_date": "2026-07-23"})
-		req := httptest.NewRequest(http.MethodPost, "/internal/eod/run", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/internal/runs/trigger", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Internal-Token", cfg.InternalEODToken)
+		req.Header.Set("X-Internal-Token", cfg.InternalRunToken)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {

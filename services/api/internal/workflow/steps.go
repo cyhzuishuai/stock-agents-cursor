@@ -34,10 +34,9 @@ const (
 	StepStatusOK     = "ok"
 	StepStatusFailed = "failed"
 
-	TriggerManual    = "manual"
-	TriggerPreOpen   = "pre_open"
-	TriggerIntraday  = "intraday"
-	TriggerLegacyEOD = "legacy_eod"
+	TriggerManual   = "manual"
+	TriggerPreOpen  = "pre_open"
+	TriggerIntraday = "intraday"
 
 	ExecutionModeAutoReject      = "auto_reject_breaches"
 	ExecutionModeRequireApproval = "require_approval"
@@ -52,7 +51,7 @@ const (
 	BrokerSyncPollInterval = 250 * time.Millisecond
 )
 
-// AgentStep describes one sequential agent call in the EOD chain.
+// AgentStep describes one sequential agent call in the workflow chain.
 type AgentStep struct {
 	Name    string
 	Timeout time.Duration

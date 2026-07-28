@@ -11,7 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestAcquireEODLockDoubleAcquireFails(t *testing.T) {
+func TestAcquireWorkflowLockDoubleAcquireFails(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
@@ -24,19 +24,19 @@ func TestAcquireEODLockDoubleAcquireFails(t *testing.T) {
 	ctx := context.Background()
 	ttl := time.Minute
 
-	unlock, err := workflow.AcquireEODLock(ctx, rdb, ttl)
+	unlock, err := workflow.AcquireWorkflowLock(ctx, rdb, ttl)
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
 	defer unlock()
 
-	_, err = workflow.AcquireEODLock(ctx, rdb, ttl)
+	_, err = workflow.AcquireWorkflowLock(ctx, rdb, ttl)
 	if !errors.Is(err, workflow.ErrLockHeld) {
 		t.Fatalf("expected ErrLockHeld, got %v", err)
 	}
 }
 
-func TestAcquireEODLockUsesGlobalBusyKey(t *testing.T) {
+func TestAcquireWorkflowLockUsesGlobalBusyKey(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
@@ -46,13 +46,13 @@ func TestAcquireEODLockUsesGlobalBusyKey(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
 
-	unlock, err := workflow.AcquireEODLock(context.Background(), rdb, time.Minute)
+	unlock, err := workflow.AcquireWorkflowLock(context.Background(), rdb, time.Minute)
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 	defer unlock()
 
-	if !mr.Exists("eod:run:lock:busy") {
-		t.Fatal("expected global busy lock key eod:run:lock:busy")
+	if !mr.Exists("workflow:run:lock:busy") {
+		t.Fatal("expected global busy lock key workflow:run:lock:busy")
 	}
 }

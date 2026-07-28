@@ -223,7 +223,7 @@ func setupSymbolSearchRouter(t *testing.T, mock *mockAlpacaTransport, withSearch
 		RiskMaxSingleNameWeight: 0.20,
 		RiskMinCashRatio:        0.10,
 		MarketDataProvider:      "alpaca",
-		InternalEODToken:        "internal-secret",
+		InternalRunToken:        "internal-secret",
 		JWTSecret:               "test-jwt-secret",
 		AlpacaAPIKey:            "test-key",
 		AlpacaAPISecret:         "test-secret",

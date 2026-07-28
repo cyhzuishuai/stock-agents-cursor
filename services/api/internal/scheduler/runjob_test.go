@@ -14,7 +14,7 @@ import (
 
 type lockHeldRunner struct{}
 
-func (lockHeldRunner) RunEOD(context.Context, workflow.RunParams) (uint, error) {
+func (lockHeldRunner) RunWorkflow(context.Context, workflow.RunParams) (uint, error) {
 	return 0, workflow.ErrLockHeld
 }
 
