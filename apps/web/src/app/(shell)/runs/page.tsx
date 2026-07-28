@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { RunStatusBadge } from "@/components/RunStatusBadge";
 import { api } from "@/lib/api";
+import { formatStartedAt } from "@/lib/datetime";
 import type { RunListItem, RunTriggerResponse } from "@/lib/types";
 
 export default function RunsPage() {
@@ -110,6 +111,7 @@ export default function RunsPage() {
               <tr>
                 <th scope="col">Run</th>
                 <th scope="col">Trade date</th>
+                <th scope="col">Started</th>
                 <th scope="col">Trigger</th>
                 <th scope="col">Strategy</th>
                 <th scope="col">Status</th>
@@ -122,6 +124,7 @@ export default function RunsPage() {
                     <Link href={`/runs/${run.id}`}>#{run.id}</Link>
                   </td>
                   <td>{run.trade_date}</td>
+                  <td>{formatStartedAt(run.created_at)}</td>
                   <td>{run.trigger || "—"}</td>
                   <td>{run.strategy_name || "—"}</td>
                   <td>

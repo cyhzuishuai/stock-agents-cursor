@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { RunStatusBadge } from "@/components/RunStatusBadge";
 import { api } from "@/lib/api";
+import { formatStartedAt } from "@/lib/datetime";
 import type {
   AgentRunEnvelope,
   AgentToolCall,
@@ -421,6 +422,7 @@ export default function RunDetailPage() {
         <h1 className="page-header__title">Run #{data.id}</h1>
         <p className="runs__meta">
           <span>{data.trade_date}</span>
+          <span>{formatStartedAt(data.created_at)}</span>
           <RunStatusBadge status={data.status} />
           {data.trigger ? <span>{data.trigger}</span> : null}
           {data.strategy_name ? <span>{data.strategy_name}</span> : null}

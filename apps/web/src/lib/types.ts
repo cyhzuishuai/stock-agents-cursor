@@ -171,6 +171,7 @@ export interface RunDetail {
   id: number;
   trade_date: string;
   status: string;
+  created_at: string;
   strategy_id: number | null;
   strategy_name: string;
   trigger: string;

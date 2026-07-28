@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RunDetailPage from "./page";
+import { formatStartedAt } from "@/lib/datetime";
 import type { RunDetail } from "@/lib/types";
 import analystEnvelope from "../../../../../../../packages/contracts/fixtures/agent_run_response.valid.json";
 
@@ -25,6 +26,7 @@ const legacyFixture: RunDetail = {
   id: 1,
   trade_date: "2026-07-28",
   status: "completed",
+  created_at: "2026-07-28T13:45:00Z",
   strategy_id: 1,
   strategy_name: "整体策略1",
   trigger: "manual",
@@ -45,6 +47,7 @@ const envelopeFixture: RunDetail = {
   id: 1,
   trade_date: "2026-07-28",
   status: "completed",
+  created_at: "2026-07-28T13:45:00Z",
   strategy_id: 1,
   strategy_name: "整体策略1",
   trigger: "manual",
@@ -62,6 +65,7 @@ const envelopeFixture: RunDetail = {
 };
 
 function mockRunFetch(run: RunDetail) {
+  vi.unstubAllGlobals();
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input) => {
@@ -79,6 +83,7 @@ function mockRunFetch(run: RunDetail) {
 
 describe("RunDetailPage", () => {
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -136,5 +141,27 @@ describe("RunDetailPage", () => {
     const roundTwo = screen.getByText(/Round 2/i).closest("li");
     expect(roundTwo).toBeTruthy();
     expect(within(roundTwo!).getByText(/lookback_days/i)).toBeTruthy();
+  });
+
+  it("shows formatted Started in meta when created_at is set", async () => {
+    mockRunFetch(legacyFixture);
+    const { container } = render(<RunDetailPage />);
+
+    const expected = formatStartedAt("2026-07-28T13:45:00Z");
+    await waitFor(() => {
+      const meta = container.querySelector(".runs__meta");
+      expect(meta?.textContent).toContain(expected);
+    });
+  });
+
+  it("shows em dash in meta when created_at is empty", async () => {
+    mockRunFetch({ ...legacyFixture, created_at: "" });
+    const { container } = render(<RunDetailPage />);
+
+    await waitFor(() => {
+      const meta = container.querySelector(".runs__meta");
+      expect(meta?.textContent).toMatch(/2026-07-28.*—/);
+      expect(meta?.textContent).not.toMatch(/\d{2}:\d{2}/);
+    });
   });
 });
