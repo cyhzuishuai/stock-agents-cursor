@@ -8,6 +8,22 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 
+def _bar_trade_date(row: dict) -> str:
+    return datetime.fromisoformat(row["t"].replace("Z", "+00:00")).strftime("%Y-%m-%d")
+
+
+def _map_alpaca_row(symbol: str, row: dict, trade_date: str | None = None) -> dict:
+    return {
+        "symbol": symbol,
+        "trade_date": trade_date or _bar_trade_date(row),
+        "open": float(row["o"]),
+        "high": float(row["h"]),
+        "low": float(row["l"]),
+        "close": float(row["c"]),
+        "volume": float(row["v"]),
+    }
+
+
 class AlpacaMarketDataProvider:
     def __init__(
         self,
@@ -37,11 +53,22 @@ class AlpacaMarketDataProvider:
             self._client = httpx.Client(timeout=30.0)
         return self._client
 
-    def get_daily_bars(self, symbols: list[str], trade_date: str) -> list[dict]:
+    def get_daily_bars(
+        self,
+        symbols: list[str],
+        trade_date: str,
+        *,
+        lookback_days: int = 1,
+    ) -> list[dict]:
         if not self._api_key or not self._api_secret:
             raise ValueError("ALPACA_API_KEY and ALPACA_API_SECRET are required")
         day = datetime.strptime(trade_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        start = day.isoformat().replace("+00:00", "Z")
+        if lookback_days == 1:
+            start_day = day
+        else:
+            buffer_days = max(7, (lookback_days // 5) * 2 + 2)
+            start_day = day - timedelta(days=lookback_days + buffer_days)
+        start = start_day.isoformat().replace("+00:00", "Z")
         end = (day + timedelta(days=1)).isoformat().replace("+00:00", "Z")
         client = self._client_or_default()
         resp = client.get(
@@ -66,16 +93,12 @@ class AlpacaMarketDataProvider:
             rows = raw_bars.get(symbol) or []
             if not rows:
                 continue
-            row = rows[0]
-            out.append(
-                {
-                    "symbol": symbol,
-                    "trade_date": trade_date,
-                    "open": float(row["o"]),
-                    "high": float(row["h"]),
-                    "low": float(row["l"]),
-                    "close": float(row["c"]),
-                    "volume": float(row["v"]),
-                }
-            )
+            eligible = [row for row in rows if _bar_trade_date(row) <= trade_date]
+            if not eligible:
+                continue
+            selected = eligible[-lookback_days:]
+            if lookback_days == 1:
+                out.append(_map_alpaca_row(symbol, selected[0], trade_date))
+            else:
+                out.extend(_map_alpaca_row(symbol, row) for row in selected)
         return out

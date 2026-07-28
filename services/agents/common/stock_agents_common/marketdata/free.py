@@ -33,27 +33,39 @@ class FreeMarketDataProvider:
             self._client.close()
             self._client = None
 
-    def get_daily_bars(self, symbols: list[str], trade_date: str) -> list[dict]:
+    def get_daily_bars(
+        self,
+        symbols: list[str],
+        trade_date: str,
+        *,
+        lookback_days: int = 1,
+    ) -> list[dict]:
         day = datetime.strptime(trade_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        period1 = int(day.timestamp())
+        if lookback_days == 1:
+            period1 = int(day.timestamp())
+        else:
+            buffer_days = max(7, (lookback_days // 5) * 2 + 2)
+            period1 = int((day - timedelta(days=lookback_days + buffer_days)).timestamp())
         period2 = int((day + timedelta(days=1)).timestamp())
 
         bars: list[dict] = []
         client = self._client_or_default()
         for symbol in symbols:
-            bar = self._fetch_symbol(client, symbol, trade_date, period1, period2)
-            if bar is not None:
-                bars.append(bar)
+            symbol_bars = self._fetch_symbol_bars(
+                client, symbol, trade_date, period1, period2, lookback_days
+            )
+            bars.extend(symbol_bars)
         return bars
 
-    def _fetch_symbol(
+    def _fetch_symbol_bars(
         self,
         client: httpx.Client,
         symbol: str,
         trade_date: str,
         period1: int,
         period2: int,
-    ) -> dict | None:
+        lookback_days: int,
+    ) -> list[dict]:
         url = _YAHOO_CHART.format(symbol=symbol)
         try:
             response = client.get(
@@ -61,55 +73,64 @@ class FreeMarketDataProvider:
                 params={"interval": "1d", "period1": period1, "period2": period2},
             )
         except httpx.HTTPError:
-            return None
+            return []
 
         if response.status_code != 200:
-            return None
+            return []
 
         try:
             payload = response.json()
         except ValueError:
-            return None
+            return []
 
         result = (payload.get("chart") or {}).get("result")
         if not result:
-            return None
+            return []
 
         row = result[0]
         timestamps = row.get("timestamp") or []
         quote = ((row.get("indicators") or {}).get("quote") or [{}])[0]
         if not timestamps:
-            return None
+            return []
 
-        # Prefer the bar whose UTC date matches trade_date; else first bar.
-        idx = 0
+        parsed: list[dict] = []
         for i, ts in enumerate(timestamps):
-            if datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d") == trade_date:
-                idx = i
-                break
+            bar_date = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+            if bar_date > trade_date:
+                continue
 
-        def _num(key: str) -> float | None:
-            values = quote.get(key) or []
-            if idx >= len(values) or values[idx] is None:
-                return None
-            return float(values[idx])
+            def _num(key: str) -> float | None:
+                values = quote.get(key) or []
+                if i >= len(values) or values[i] is None:
+                    return None
+                return float(values[i])
 
-        open_, high, low, close, volume = (
-            _num("open"),
-            _num("high"),
-            _num("low"),
-            _num("close"),
-            _num("volume"),
-        )
-        if None in (open_, high, low, close, volume):
-            return None
+            open_, high, low, close, volume = (
+                _num("open"),
+                _num("high"),
+                _num("low"),
+                _num("close"),
+                _num("volume"),
+            )
+            if None in (open_, high, low, close, volume):
+                continue
 
-        return {
-            "symbol": symbol,
-            "trade_date": trade_date,
-            "open": open_,
-            "high": high,
-            "low": low,
-            "close": close,
-            "volume": volume,
-        }
+            parsed.append(
+                {
+                    "symbol": symbol,
+                    "trade_date": bar_date,
+                    "open": open_,
+                    "high": high,
+                    "low": low,
+                    "close": close,
+                    "volume": volume,
+                }
+            )
+
+        if not parsed:
+            return []
+
+        selected = parsed[-lookback_days:]
+        if lookback_days == 1:
+            selected[0]["trade_date"] = trade_date
+        return selected
