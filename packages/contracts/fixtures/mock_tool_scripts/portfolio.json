@@ -1,0 +1,40 @@
+{
+  "rounds": [
+    {
+      "tool_calls": [
+        { "id": "1", "name": "get_account_view", "args": {} }
+      ]
+    },
+    {
+      "tool_calls": [
+        { "id": "2", "name": "get_risk_context", "args": {} }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "id": "3",
+          "name": "size_proposals",
+          "args": {}
+        }
+      ]
+    },
+    {
+      "content_json": {
+        "proposals": [
+          {
+            "symbol": "AAPL",
+            "side": "buy",
+            "qty": 20,
+            "target_weight": 0.15,
+            "stop_loss": 170.0,
+            "take_profit": 230.0,
+            "estimated_notional": 3820.0,
+            "estimated_cash_impact": -3820.0
+          }
+        ],
+        "warnings": []
+      }
+    }
+  ]
+}
