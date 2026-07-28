@@ -195,13 +195,27 @@ def run_tool_loop(
 
         tool_calls = resp.get("tool_calls")
         content = resp.get("content")
-        model_name = (os.environ.get("LLM_MODEL") or "mock").strip() or "mock"
+        router_meta = resp.get("router") if isinstance(resp.get("router"), dict) else {}
+        model_name = (
+            str(router_meta.get("model") or "").strip()
+            or (os.environ.get("LLM_MODEL") or os.environ.get("LLM_PRIMARY_MODEL") or "mock").strip()
+            or "mock"
+        )
+        llm_meta: dict[str, Any] = {
+            "model": model_name,
+            "latency_ms": int(resp.get("latency_ms") or 0),
+        }
+        if router_meta:
+            llm_meta["provider"] = router_meta.get("provider")
+            llm_meta["fallback_used"] = bool(router_meta.get("fallback_used"))
+            if router_meta.get("primary_error"):
+                llm_meta["primary_error"] = router_meta.get("primary_error")
 
         append_round(
             trace,
             {
                 "i": round_i + 1,
-                "llm": {"model": model_name, "latency_ms": int(resp.get("latency_ms") or 0)},
+                "llm": llm_meta,
                 "assistant": {
                     "content": content,
                     "tool_calls": [
