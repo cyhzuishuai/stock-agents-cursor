@@ -40,13 +40,17 @@
   - **Intraday**：美东窗口内按间隔触发（间隔 `0` 关闭；`>0` 时 ≥15 分钟）。
   - **`execution_mode`**：风控超限后的处理方式（见下）。
 - 激活或修改激活策略的调度字段后，进程内调度器**热重载**。
-- 无激活策略时不注册自动 tick；路径名含 `eod` 的接口为历史命名，语义是「触发一次工作流」，不是「仅日终」。
+- 无激活策略时不注册自动 tick。
+- **手动触发**：UI「Run now」或 `POST /api/v1/runs/trigger`（JWT）；可选 `trade_date`（默认美东当日）。
+- **内部触发**：`POST /internal/runs/trigger`，请求头 `X-Internal-Token: $INTERNAL_RUN_TOKEN`（调度器 pre-open / intraday 与脚本冒烟）。
 
 **系统默认策略「整体策略1」示例：** 开盘前 10 分钟（09:20 ET）；盘中 10:00–15:00 ET 每 60 分钟；`execution_mode=auto_reject_breaches`。
 
 ### 3.2 Analyst → Portfolio 工具循环
 
 Go 注入 Alpaca 账户快照（现金 / 权益 / 持仓 / 未成交订单）与 `risk_context`，依次调用 **agent-runtime** 两次（`agent=analyst` → `agent=portfolio`）。每步返回 `{result, trace}`；Go 持久化完整 envelope，并将 `result` 传给下一步。Runs 详情可展开工具时间线（`trace.rounds`）。
+
+agent-runtime 通过 `LLM_MODE=mock|live` 切换 mock 与实模型；live 时默认 OpenAI 兼容 API（生产示例：`MiniMax-M3`）。Analyst 工具含日线行情、**Finnhub** 新闻、**Tavily** 网页搜索（缺 key 时优雅降级）、账户视图与风控上下文；Portfolio 工具含账户、风控、收盘价与 `size_proposals`。
 
 | 步骤 | Graph | 产出要点 |
 |------|--------|----------|
@@ -144,7 +148,7 @@ Run 终态简述：`executed`（无待审且提案均已终态）、`awaiting_ap
 3. Alpaca Paper 为账户与成交权威；本地账本路径不作为生产成交权威。
 4. 密钥与经纪商凭证仅服务端持有。
 
-更细的流程图见 [`docs/eod-workflow-flowchart.md`](./eod-workflow-flowchart.md)。
+更细的流程图见 [`docs/workflow-flowchart.md`](./workflow-flowchart.md)。
 
 ---
 
@@ -167,7 +171,8 @@ Run 终态简述：`executed`（无待审且提案均已终态）、`awaiting_ap
 | [`docs/prd.md`](./prd.md) | 产品需求与验收（现状） |
 | [`README.md`](../README.md) | 快速启动与环境变量 |
 | [`deploy/README.md`](../deploy/README.md) | Compose、冒烟与 E2E |
-| [`docs/eod-workflow-flowchart.md`](./eod-workflow-flowchart.md) | 工作流与风控流程图 |
+| [`docs/workflow-flowchart.md`](./workflow-flowchart.md) | 工作流与风控流程图 |
+| [`docs/superpowers/specs/2026-07-28-remove-eod-naming-live-llm-design.md`](./superpowers/specs/2026-07-28-remove-eod-naming-live-llm-design.md) | 去除 EOD 命名与 live LLM 兼容 |
 | [`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`](./superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md) | V1 基线（部分已被后续规格取代） |
 | [`docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`](./superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md) | 策略调度与 Runs 可观测 |
 | [`docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`](./superpowers/specs/2026-07-28-alpaca-paper-authority-design.md) | Alpaca Paper 权威 |

@@ -1,16 +1,15 @@
-# 策略驱动纸面交易流程图
-
-> 文件名含历史 `eod` 前缀；**产品节奏由激活策略决定**（pre-open / intraday），不是单一日终 cron。
+# 策略工作流流程图
 
 对应设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`（V1 基线）。  
 **Agent Runtime 工具循环**：`docs/superpowers/specs/2026-07-28-agent-runtime-tool-loop-design.md`（**取代**五 Agent 单步链）。  
-**调度与 Runs 可观测性**：`docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`（**取代** V1「仅 EOD」节奏）。  
+**调度与 Runs 可观测性**：`docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`（**取代** V1 单一日终 cron 节奏）。  
 **现金 / 持仓 / 订单权威**：`docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`（Phase 1 已落地）。
 
 ## 策略驱动调度与 execution_mode
 
 - **Cadence**：由当前**激活策略**决定。默认含 **pre-open**（常规开盘前，如 09:20 ET）与 **intraday**（盘中定时，如 10:00–15:00 每小时）两类触发；调度器随策略切换热重载。无激活策略时**不注册**自动 tick。
-- **手动触发**：Web「Run now」→ `POST /api/v1/runs/eod`（路径名为历史遗留）；`trigger=manual`，并挂上当前激活 `strategy_id`（若有）。
+- **手动触发**：Web「Run now」→ `POST /api/v1/runs/trigger`；`trigger=manual`，并挂上当前激活 `strategy_id`（若有）。
+- **内部触发**（脚本 / 调度器）：`POST /internal/runs/trigger`，请求头 `X-Internal-Token: $INTERNAL_RUN_TOKEN`；`trigger=pre_open` / `intraday` / `manual`。
 - **`require_approval`**：Go 风控超限 → 创建 approval；人工 `approved` 后向 Alpaca Paper 提交订单。
 - **`auto_reject_breaches`**：Go 风控超限**不创建** approval，提案直接 `rejected`；无其余待审项时 run 仍可终态为 `executed`。
 - **`bypass_risk`**：跳过 Go 风控；可执行提案直接向 Alpaca Paper 提交市价单。
@@ -49,7 +48,7 @@ flowchart TB
     MD[行情源 free/alpaca]
     News[Finnhub 新闻]
     Search[Tavily 网页搜索]
-    LLM[LLM API]
+    LLM[LLM API<br/>mock / live]
   end
 
   Web --> Auth
@@ -81,12 +80,13 @@ flowchart TB
 - **Alpaca Paper** 为现金、持仓、订单与成交价的权威；Go API 是唯一与 Alpaca Trading 交互的组件。
 - Go 在风控通过、`bypass_risk` 或审批 `approved` 后向 Alpaca 提交市价单；Postgres 仅存 runs / proposals / approvals 及订单镜像（审计）。
 - **Go 规则引擎**为最终风控判定（`bypass_risk` 时跳过）；无 Python Risk 步骤。
+- agent-runtime 通过 `LLM_MODE=mock|live` 切换 mock 与实模型；live 默认兼容 OpenAI 格式 API（含 MiniMax-M3）。
 
 ## 2. 工作流主流程（策略 tick / 手动）
 
 ```mermaid
 flowchart TD
-  Start([策略调度 pre-open/intraday<br/>或手动 Run now]) --> Lock{Redis 全局 busy 锁}
+  Start([策略调度 pre-open/intraday<br/>或手动 Run now]) --> Lock{Redis 全局 busy 锁<br/>workflow:run:lock:busy}
   Lock -->|获取失败| Abort([跳过 / 已有运行中])
   Lock -->|成功| Create[创建 workflow_run<br/>Alpaca 账户快照 + 观察列表 + risk_context]
 
@@ -159,7 +159,7 @@ sequenceDiagram
   participant RT as agent-runtime
   participant DB as PostgreSQL
 
-  Cron->>API: 策略 tick /internal/eod/run<br/>(trigger=pre_open|intraday)
+  Cron->>API: POST /internal/runs/trigger<br/>(trigger=pre_open|intraday)
   API->>R: 获取全局 busy 锁
   API->>API: 构建 Alpaca 账户快照 + risk_context
   API->>DB: 创建 workflow_run<br/>(strategy_id + trigger)

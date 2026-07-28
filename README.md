@@ -7,10 +7,10 @@
 设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`（V1 基线；**调度节奏已由策略规格取代**）  
 策略调度：`docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`  
 Alpaca Paper 权威：`docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`  
-流程说明：`docs/eod-workflow-flowchart.md`  
+流程说明：`docs/workflow-flowchart.md`  
 部署说明：`deploy/README.md`
 
-**调度：** 由当前**激活策略**的 pre-open / intraday 配置驱动（热重载）；也可在 UI 手动触发一次 run。`EOD_CRON` / 路径名 `…/runs/eod` 为历史命名，语义是「手动/内部触发一次工作流」，不是「仅日终」。
+**调度：** 由当前**激活策略**的 pre-open / intraday 配置驱动（热重载）；也可在 UI 手动触发一次 run（`POST /api/v1/runs/trigger`）或通过内部端点 `POST /internal/runs/trigger`（`X-Internal-Token: $INTERNAL_RUN_TOKEN`）。
 
 **权威边界：** Alpaca Paper 为现金、持仓、订单与成交价的权威；Postgres 存 runs / proposals / approvals 及订单镜像。`INITIAL_CASH` 仅用于离线测试。
 
@@ -29,7 +29,8 @@ cp deploy/env.example deploy/.env
 |------|------|
 | `JWT_SECRET` | 登录 JWT 密钥（务必改掉默认值） |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 单用户管理员账号 |
-| `LLM_API_KEY` / `LLM_BASE_URL` | 实模型时填写；本地可用 Compose override 的 `LLM_MODE=mock` |
+| `LLM_MODE` | `mock`（本地/CI 默认）或 `live`（实模型；示例 `LLM_MODEL=MiniMax-M3`） |
+| `LLM_API_KEY` / `LLM_BASE_URL` | live 时填写；mock 可省略 |
 | `AGENT_RUNTIME_URL` | Go → agent-runtime（Compose 内默认 `http://agent-runtime:8001`） |
 | `FINNHUB_API_KEY` | 可选；新闻工具缺 key 时优雅降级 |
 | `WEB_SEARCH_ENABLED` | 默认 `true` |
@@ -41,7 +42,7 @@ cp deploy/env.example deploy/.env
 | `ALPACA_DATA_BASE_URL` | 默认 `https://data.alpaca.markets` |
 | `MARKET_DATA_PROVIDER` | 默认 `alpaca`；无密钥时可设 `free`（Yahoo）作开发回退 |
 | `ALPACA_STREAM_ENABLED` | 默认 `false`（E2E 期望 stream 返回 503）；`true` 时开 JWT SSE（需密钥） |
-| `INTERNAL_EOD_TOKEN` | 内部手动/脚本触发工作流的 token（路径仍为 `/internal/eod/run`） |
+| `INTERNAL_RUN_TOKEN` | 内部/脚本触发工作流（`POST /internal/runs/trigger`，请求头 `X-Internal-Token`） |
 
 `deploy/env.example` 是可入库模板；`deploy/.env` 已被根目录 `.gitignore` 忽略，勿提交。
 
@@ -72,7 +73,7 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.override.ym
 健康检查：`curl http://localhost:8080/healthz`  
 默认登录：`admin` / `admin123`（以你的 `.env` 为准）
 
-工作流冒烟：`.\deploy\smoke_eod.ps1` 或 `./deploy/smoke_eod.sh`  
+工作流冒烟：`.\deploy\smoke_run.ps1` 或 `./deploy/smoke_run.sh`  
 API E2E（需先 `docker compose up --build`，且 `.env` 中配置 Alpaca Paper 密钥）：`.\deploy\e2e_api.ps1` 或 `./deploy/e2e_api.sh`  
 
 E2E 覆盖：Alpaca overview / portfolio / orders、strategies、手动 run 终态、approvals、settings、stream（未开流式时期望 503）。本地最近一次：`e2e_api.ps1` **17/17 PASS**（2026-07-28）。详情见 `deploy/README.md`。

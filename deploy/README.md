@@ -27,7 +27,8 @@ Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, `ALPACA_API_KE
 | `MARKET_DATA_PROVIDER` | Default `alpaca`; set `free` (Yahoo) only as dev fallback without keys |
 | `INITIAL_CASH` | Offline/test seed only; live cash comes from Alpaca Paper account |
 | `AGENT_RUNTIME_URL` | Internal URL for Go → agent-runtime (Compose default `http://agent-runtime:8001`) |
-| `LLM_MODE` | `mock` for local/CI (override sets this); omit or set real for OpenAI-compatible API |
+| `INTERNAL_RUN_TOKEN` | Required for `POST /internal/runs/trigger` (`X-Internal-Token` header) |
+| `LLM_MODE` | `mock` for local/CI (override sets this); `live` for real LLM (e.g. `MiniMax-M3`) |
 | `FINNHUB_API_KEY` | Optional; news tool degrades gracefully when missing |
 | `WEB_SEARCH_ENABLED` | Default `true`; set `false` to disable Tavily web search tool |
 | `WEB_SEARCH_PROVIDER` | Default `tavily` |

@@ -17,7 +17,7 @@
 ### 1.2 产品目标
 
 1. 以**激活策略**配置交易节奏与执行模式，并驱动进程内调度。
-2. 固定流水线调用 Data → Research → Decision → Portfolio → Risk（建议），产出可审计的逐步结果。
+2. 固定流水线调用 **agent-runtime**（Analyst → Portfolio 工具循环），产出可审计的逐步结果与工具轨迹（`trace`）。
 3. 仅由 Go API 在门控通过（或 bypass / 人工批准）后向 **Alpaca Paper** 提交市价单。
 4. 提供单用户控制台：总览、持仓、Runs、审批、Settings。
 5. 全栈可通过 Docker Compose 一键拉起，并用冒烟 / API E2E 验证主路径。
@@ -27,8 +27,8 @@
 | ID | 标准 | 验收线索 |
 |----|------|----------|
 | S1 | 激活策略驱动 pre-open / intraday；热重载 | Settings 激活策略后调度行为变化；无激活策略无自动 tick |
-| S2 | 手动触发工作流可用 | UI Run now / `POST /api/v1/runs/eod` / `POST /internal/eod/run` |
-| S3 | 五步 Agent + 逐步 payload 可查 | Run 详情 `steps[].payload_json` |
+| S2 | 手动触发工作流可用 | UI Run now / `POST /api/v1/runs/trigger` / `POST /internal/runs/trigger` |
+| S3 | Analyst + Portfolio 两步 + 逐步 payload / trace 可查 | Run 详情 `steps[].payload_json`（含 `{result, trace}`） |
 | S4 | 三种 `execution_mode` 行为正确 | 超限 → 待审 / 拒绝 / 跳过风控 |
 | S5 | Alpaca 为 cash/positions/orders/fill 权威 | Overview/Portfolio/Orders 读经纪商；提案成交同步 |
 | S6 | Settings 可编辑观察列表与风控数值 | 增删符号、`can_hold`、PATCH risk key |
@@ -44,7 +44,7 @@
 - 单管理员 JWT 认证
 - 策略库 CRUD（系统默认不可删；不可删激活中策略）、激活唯一、调度字段、三种执行模式
 - 策略调度（美东日历工作日假设；常规开盘 09:30 ET）+ 手动 run
-- 五 Agent HTTP 工作流、Schema 校验失败则 run `failed` 且本 run 不向 Alpaca 提交
+- agent-runtime Analyst → Portfolio 工具循环、Schema 校验失败则 run `failed` 且本 run 不向 Alpaca 提交
 - Go 风控规则评估（非 `bypass_risk`）
 - Alpaca Paper 下单与账户/持仓/订单展示；订单镜像入库
 - 人工审批（按笔）与 run 取消
@@ -72,7 +72,7 @@
 
 | 角色 | 认证 | 权限 |
 |------|------|------|
-| Admin | `POST /api/v1/auth/login` → JWT | 全部 `/api/v1/*` 已认证接口；内部触发另需 `INTERNAL_EOD_TOKEN` |
+| Admin | `POST /api/v1/auth/login` → JWT | 全部 `/api/v1/*` 已认证接口；内部触发另需 `INTERNAL_RUN_TOKEN`（`X-Internal-Token`） |
 
 无访客只读模式；无多用户隔离。
 
@@ -115,7 +115,7 @@
 | RUN-1 | 手动触发创建 run，`trigger=manual`，挂上当前激活 `strategy_id`（若有） | Runs API/UI 可见 |
 | RUN-2 | 调度触发分别标记 `pre_open` / `intraday` | 字段可查 |
 | RUN-3 | 同账户同时仅一个工作流执行 | Redis busy 锁；冲突则跳过/不并行 |
-| RUN-4 | 顺序执行五 Agent；每步结果入库 | 详情可见 step 状态与 payload |
+| RUN-4 | 顺序执行 Analyst → Portfolio；每步 `{result, trace}` 入库 | 详情可见 step 状态与 payload |
 | RUN-5 | Agent/Schema/关键失败 → run `failed`，本 run 不向 Alpaca 提交 | 无部分假成交 |
 | RUN-6 | 终态：`executed` / `awaiting_approval` / `failed` / `cancelled` | 语义见产品说明 |
 | RUN-7 | 允许同一 run 内部分提案提交、部分拒绝或待审 | 与风控模式一致 |
@@ -132,7 +132,6 @@
 | RISK-5 | 通过门控后提交 Alpaca **市价单**，并同步至 terminal 或超时 | proposal 状态与镜像订单更新 |
 | RISK-6 | `can_hold=false` 的标的不得新增买入成交 | 买入侧门控 |
 | RISK-7 | 缺 Alpaca 凭证时失败清晰，不静默本地假成交 | run/配置错误可感知 |
-| RISK-8 | Python Risk 输出仅审计，不覆盖 Go 判定 | 存储但不改门控结果 |
 
 ### 4.6 审批
 
@@ -183,7 +182,7 @@
 | Runs / Steps / Proposals / Approvals / Strategies / Watchlist / Risk 配置 | Postgres | 系统编排与配置 SoR |
 | Agent 逐步产出 | Postgres `workflow_step_results.payload_json` | 可观测与审计 |
 
-信任边界与流程图以 [`docs/eod-workflow-flowchart.md`](./eod-workflow-flowchart.md) 为准。
+信任边界与流程图以 [`docs/workflow-flowchart.md`](./workflow-flowchart.md) 为准。
 
 ---
 
@@ -220,7 +219,7 @@
 | 检查 | 命令 / 入口 |
 |------|-------------|
 | 健康检查 | `GET /healthz` |
-| 工作流冒烟 | `deploy/smoke_eod.ps1` 或 `smoke_eod.sh` |
+| 工作流冒烟 | `deploy/smoke_run.ps1` 或 `smoke_run.sh` |
 | API E2E | `deploy/e2e_api.ps1` 或 `e2e_api.sh`（需 Paper 密钥；覆盖 overview/portfolio/orders、strategies、手动 run 终态、approvals、settings、stream 503 等） |
 
 部署与环境变量说明：[`deploy/README.md`](../deploy/README.md)、根目录 [`README.md`](../README.md)。
@@ -235,6 +234,8 @@
 | 策略调度 + Runs 可观测 | `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md` |
 | Alpaca Paper 权威 | `docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md` |
 | Settings 观察列表 / 风控编辑 | `docs/superpowers/specs/2026-07-28-settings-watchlist-risk-edit-design.md` |
+| Agent runtime 工具循环 | `docs/superpowers/specs/2026-07-28-agent-runtime-tool-loop-design.md` |
+| 去除 EOD 命名 / live LLM | `docs/superpowers/specs/2026-07-28-remove-eod-naming-live-llm-design.md` |
 | Desk UI（日结/展示相关） | `docs/superpowers/specs/2026-07-27-day-settlement-desk-ui-design.md` |
 
 ---

@@ -18,7 +18,7 @@ GET /api/v1/portfolio -> { cash, positions: [{ symbol, qty, avg_cost, stop_loss,
 ## Runs
 GET /api/v1/runs -> [{ id, trade_date, status, created_at }]
 GET /api/v1/runs/:id -> { id, trade_date, status, steps: [...], proposals: [...], orders: [...] }
-POST /api/v1/runs/eod { "trade_date"?: "YYYY-MM-DD" } -> { run_id }
+POST /api/v1/runs/trigger { "trade_date"?: "YYYY-MM-DD" } -> { run_id }
 POST /api/v1/runs/:id/cancel -> { ok: true }
 
 ## Approvals
@@ -38,4 +38,4 @@ PATCH /api/v1/settings/risk/:key { value: number } -> { key, value }
 GET /api/v1/symbols/search?q= -> [{ symbol, name, price?, change?, change_pct?, asset_class? }]  (Alpaca assets + snapshots)
 
 ## Internal
-POST /internal/eod/run  Header X-Internal-Token -> { run_id }
+POST /internal/runs/trigger  Header X-Internal-Token: $INTERNAL_RUN_TOKEN -> { run_id }
