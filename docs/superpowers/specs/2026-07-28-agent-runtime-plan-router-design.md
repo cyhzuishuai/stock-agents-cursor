@@ -1,7 +1,7 @@
 # Agent Runtime: Model Router + Plan/Act/Reflect + Observability — Design Spec
 
 **Date:** 2026-07-28  
-**Status:** Draft — awaiting user review before implementation plans  
+**Status:** Approved for implementation  
 **Approach:** Domain agent runtime on LangGraph (custom plan/act/reflect orchestration; not a from-scratch graph engine)
 
 ## Goal
