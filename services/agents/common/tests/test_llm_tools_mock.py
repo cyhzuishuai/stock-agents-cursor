@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from stock_agents_common.llm_tools import ToolLLMClient
+from stock_agents_common.llm_tools import ToolLLMClient, extract_json_from_content
 from stock_agents_common.schemas import validate
 
 
@@ -225,3 +225,112 @@ def test_real_mode_requires_api_key(monkeypatch):
     client = ToolLLMClient()
     with pytest.raises(ValueError, match="LLM_API_KEY"):
         client.complete_tools("sys", [{"role": "user", "content": "x"}], [])
+
+
+def test_extract_json_strips_think_tags_and_markdown_fence():
+    payload = {
+        "items": [
+            {
+                "symbol": "AAPL",
+                "bias": "bull",
+                "confidence": 0.7,
+                "thesis": "Up",
+                "side": "buy",
+                "urgency": "normal",
+                "rationale": "Bars",
+            }
+        ],
+        "warnings": [],
+    }
+    raw = (
+        "<think>reasoning about the market...</think>\n"
+        "```json\n"
+        f"{json.dumps(payload)}\n"
+        "```\n"
+    )
+    assert extract_json_from_content(raw) == payload
+
+
+def test_extract_json_handles_plain_json_and_invalid():
+    assert extract_json_from_content('{"a": 1}') == {"a": 1}
+    assert extract_json_from_content(None) is None
+    assert extract_json_from_content("") is None
+    assert extract_json_from_content("not json at all") is None
+    assert extract_json_from_content("<think>only thoughts</think>") is None
+
+
+def test_minimax_payload_disables_thinking_by_default(monkeypatch):
+    monkeypatch.setenv("LLM_MODE", "live")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.minimax.chat/v1")
+    monkeypatch.setenv("LLM_MODEL", "MiniMax-M3")
+    monkeypatch.delenv("LLM_THINKING", raising=False)
+    monkeypatch.delenv("LLM_REASONING_SPLIT", raising=False)
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"ok": true}', "tool_calls": None}}],
+                "usage": {},
+            },
+        )
+
+    client = ToolLLMClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    client.complete_tools("system", [{"role": "user", "content": "x"}], [])
+
+    assert captured["thinking"] == {"type": "disabled"}
+    assert "reasoning_split" not in captured
+
+
+def test_minimax_payload_adaptive_thinking_and_reasoning_split(monkeypatch):
+    monkeypatch.setenv("LLM_MODE", "live")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.minimax.io/v1")
+    monkeypatch.setenv("LLM_THINKING", "adaptive")
+    monkeypatch.setenv("LLM_REASONING_SPLIT", "true")
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "{}", "tool_calls": None}}],
+                "usage": {},
+            },
+        )
+
+    client = ToolLLMClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    client.complete_tools("system", [{"role": "user", "content": "x"}], [])
+
+    assert captured["thinking"] == {"type": "adaptive"}
+    assert captured["reasoning_split"] is True
+
+
+def test_non_minimax_payload_omits_thinking(monkeypatch):
+    monkeypatch.setenv("LLM_MODE", "live")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.openai.com/v1")
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "{}", "tool_calls": None}}],
+                "usage": {},
+            },
+        )
+
+    client = ToolLLMClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    client.complete_tools("system", [{"role": "user", "content": "x"}], [])
+
+    assert "thinking" not in captured
+    assert "reasoning_split" not in captured

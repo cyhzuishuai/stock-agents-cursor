@@ -17,7 +17,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from stock_agents_common.llm_tools import ToolLLMClient
+from stock_agents_common.llm_tools import ToolLLMClient, extract_json_from_content
 from stock_agents_common.schemas import validate
 from stock_agents_common.tools import RunContext
 from stock_agents_common.trace import append_round, finalize_trace, new_trace, result_preview
@@ -151,6 +151,16 @@ def run_tool_loop(
             },
         )
 
+    def _fallback_candidate() -> dict[str, Any] | None:
+        """Baseline / size proposals, or empty dict for analyst align defaults."""
+        candidate = bag.get("last_size_proposals") or bag.get("baseline")
+        if candidate is not None:
+            return candidate if isinstance(candidate, dict) else None
+        # Analyst can fill hold/neutral defaults from watchlist via align_result({}).
+        if agent == "analyst" and align_result is not None:
+            return {}
+        return None
+
     def _try_candidate(candidate: dict[str, Any] | None, stop_reason: str) -> dict[str, Any] | None:
         if candidate is None:
             return None
@@ -166,10 +176,7 @@ def run_tool_loop(
     def call_model(state: LoopState) -> dict[str, Any]:
         round_i = int(state.get("round_i") or 0)
         if round_i >= max_rounds:
-            update = _try_candidate(
-                bag.get("last_size_proposals") or bag.get("baseline"),
-                "max_rounds",
-            )
+            update = _try_candidate(_fallback_candidate(), "max_rounds")
             if update is not None:
                 return {**update, "round_i": round_i}
             return {
@@ -223,14 +230,7 @@ def run_tool_loop(
                 "result": None,
             }
 
-        parsed: dict[str, Any] | None = None
-        if content:
-            try:
-                loaded = json.loads(content) if isinstance(content, str) else content
-                if isinstance(loaded, dict):
-                    parsed = loaded
-            except json.JSONDecodeError:
-                parsed = None
+        parsed = extract_json_from_content(content)
 
         if parsed is not None:
             aligned = align_result(parsed, req) if align_result else parsed
@@ -244,10 +244,9 @@ def run_tool_loop(
                 "stop_reason": "final",
             }
 
-        update = _try_candidate(
-            bag.get("last_size_proposals") or bag.get("baseline"),
-            "final",
-        )
+        # Prefer baseline when present (portfolio); analyst empty non-JSON → hold defaults.
+        stop = "final" if bag.get("last_size_proposals") or bag.get("baseline") else "max_rounds"
+        update = _try_candidate(_fallback_candidate(), stop)
         if update is not None:
             return {**update, "round_i": round_i + 1, "last_content": content}
 
@@ -372,7 +371,7 @@ def run_tool_loop(
             stop_reason = "final" if stop_reason not in {"final", "max_rounds"} else stop_reason
 
     if result is None:
-        candidate = bag.get("last_size_proposals") or bag.get("baseline")
+        candidate = _fallback_candidate()
         if candidate is not None:
             aligned = align_result(candidate, req) if align_result else candidate
             validate(aligned, result_schema)

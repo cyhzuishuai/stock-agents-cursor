@@ -16,11 +16,66 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+_THINK_TAG_RE = re.compile(
+    r"<(think|thinking|reason|reasoning)\b[^>]*>.*?</\1>",
+    re.IGNORECASE | re.DOTALL,
+)
+_FENCED_JSON_RE = re.compile(
+    r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def extract_json_from_content(content: str | dict[str, Any] | None) -> dict[str, Any] | None:
+    """Parse assistant content into a JSON object.
+
+    Strips ``<think>...</think>`` (and similar) tags, prefers fenced
+    ``json`` markdown blocks, then falls back to ``json.loads`` on the remainder.
+    """
+    if content is None:
+        return None
+    if isinstance(content, dict):
+        return content
+    if not isinstance(content, str):
+        return None
+    text = content.strip()
+    if not text:
+        return None
+
+    cleaned = _THINK_TAG_RE.sub("", text).strip()
+    if not cleaned:
+        return None
+
+    fenced = _FENCED_JSON_RE.search(cleaned)
+    candidates: list[str] = []
+    if fenced:
+        candidates.append(fenced.group(1).strip())
+    candidates.append(cleaned)
+
+    # Also try first {...} object substring when fences/plain fail.
+    brace = cleaned.find("{")
+    if brace >= 0:
+        candidates.append(cleaned[brace:])
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            loaded = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(loaded, dict):
+            return loaded
+    return None
 
 
 def _find_repo_root() -> Path:
@@ -209,6 +264,17 @@ class ToolLLMClient:
         else:
             # Finalize round: ask for a JSON object when no tools are offered.
             payload["response_format"] = {"type": "json_object"}
+
+        # MiniMax OpenAI-compatible extras (thinking / reasoning_split).
+        if "minimax" in base_url.lower():
+            thinking_mode = (os.environ.get("LLM_THINKING") or "disabled").strip().lower()
+            if thinking_mode == "adaptive":
+                payload["thinking"] = {"type": "adaptive"}
+            else:
+                payload["thinking"] = {"type": "disabled"}
+            reasoning_split = (os.environ.get("LLM_REASONING_SPLIT") or "").strip().lower()
+            if reasoning_split in {"true", "1", "yes"}:
+                payload["reasoning_split"] = True
 
         started = time.perf_counter()
         if self._http_client is not None:
