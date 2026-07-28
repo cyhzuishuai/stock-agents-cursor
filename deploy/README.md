@@ -17,7 +17,7 @@ Automatic runs come from the **active strategy** (pre-open + intraday jobs; hot-
 cp deploy/env.example deploy/.env
 ```
 
-Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, `ALPACA_API_KEY`, `ALPACA_API_SECRET`, …).
+Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, `ALPACA_API_KEY`, `ALPACA_API_SECRET`, `FINNHUB_API_KEY`, `WEB_SEARCH_API_KEY`, …).
 
 | Variable | Notes |
 |----------|-------|
@@ -26,6 +26,14 @@ Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, `ALPACA_API_KE
 | `ALPACA_DATA_BASE_URL` | Default `https://data.alpaca.markets` (bars + symbol-search snapshots) |
 | `MARKET_DATA_PROVIDER` | Default `alpaca`; set `free` (Yahoo) only as dev fallback without keys |
 | `INITIAL_CASH` | Offline/test seed only; live cash comes from Alpaca Paper account |
+| `AGENT_RUNTIME_URL` | Internal URL for Go → agent-runtime (Compose default `http://agent-runtime:8001`) |
+| `LLM_MODE` | `mock` for local/CI (override sets this); omit or set real for OpenAI-compatible API |
+| `FINNHUB_API_KEY` | Optional; news tool degrades gracefully when missing |
+| `WEB_SEARCH_ENABLED` | Default `true`; set `false` to disable Tavily web search tool |
+| `WEB_SEARCH_PROVIDER` | Default `tavily` |
+| `WEB_SEARCH_API_KEY` | Optional; web search tool degrades when missing |
+| `MAX_TOOL_ROUNDS_ANALYST` | Default `8` |
+| `MAX_TOOL_ROUNDS_PORTFOLIO` | Default `3` |
 
 Settings watchlist symbol search (`GET /api/v1/symbols/search`) uses Alpaca assets + snapshots (not Yahoo). Requires `ALPACA_API_KEY` / `ALPACA_API_SECRET`.
 
@@ -44,6 +52,7 @@ Do **not** commit `deploy/.env`.
 |---------|-----|
 | Web UI | http://localhost:3000 |
 | API | http://localhost:8080 |
+| agent-runtime | http://localhost:8001/healthz |
 
 The web app calls the API via `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8080`), which must be reachable from the browser—not an internal Docker hostname like `http://api:8080`.
 
@@ -64,7 +73,7 @@ cd deploy
 docker compose up --build
 ```
 
-Health check: `curl http://localhost:8080/healthz`
+Health check: `curl http://localhost:8080/healthz` and optionally `curl http://localhost:8001/healthz` (agent-runtime).
 
 ## Workflow smoke test
 
@@ -107,7 +116,7 @@ Bash requires `curl` plus `jq` or `python3` for JSON parsing.
 
 ## API E2E (`e2e_api`)
 
-Broader than smoke: hits **Alpaca-backed** overview / portfolio / orders, strategies, runs, **manual workflow run** (default `trade_date` = **US/Eastern today**; override with `EOD_TRADE_DATE`) → terminal status, approvals, settings, and stream endpoint (200 if enabled, **503** when `ALPACA_STREAM_ENABLED=false`). Same env vars as smoke. **Requires a running Compose stack** rebuilt with current images; local override uses `LLM_MODE=mock` for agents. **`ALPACA_API_KEY` / `ALPACA_API_SECRET` must be set** in `deploy/.env` or overview/portfolio/orders return `503 alpaca not configured`. A run may submit **Paper** market orders when risk/`bypass_risk` allows.
+Broader than smoke: hits **Alpaca-backed** overview / portfolio / orders, strategies, runs, **manual workflow run** (default `trade_date` = **US/Eastern today**; override with `EOD_TRADE_DATE`) → terminal status, approvals, settings, and stream endpoint (200 if enabled, **503** when `ALPACA_STREAM_ENABLED=false`). Same env vars as smoke. **Requires a running Compose stack** rebuilt with current images; local override uses `LLM_MODE=mock` on **agent-runtime**. **`ALPACA_API_KEY` / `ALPACA_API_SECRET` must be set** in `deploy/.env` or overview/portfolio/orders return `503 alpaca not configured`. A run may submit **Paper** market orders when Go risk / `bypass_risk` allows.
 
 ```powershell
 # from deploy/ with stack up
@@ -127,11 +136,11 @@ Verified against design specs via unit tests (`go test ./...` in `services/api`,
 | Area | Status | Notes |
 |------|--------|-------|
 | Strategy schedule + manual trigger | Implemented | **DB active strategy is authoritative** (pre-open + intraday via `strategy.BuildJobSpecs`; hot-reload). `EOD_CRON` is **legacy only**. Manual: `POST /api/v1/runs/eod` / `POST /internal/eod/run`; web **Run now**. |
-| Five agents / broker boundary | Implemented | Agents proposal-only; Go submits to Alpaca Paper after risk gate or `bypass_risk`. |
+| agent-runtime / broker boundary | Implemented | Analyst + Portfolio tool-loops proposal-only; Go submits to Alpaca Paper after risk gate or `bypass_risk`. |
 | Alpaca Paper authority | Implemented (Phase 1 + SSE client) | Bars, broker submit, Overview/Portfolio/Orders from Alpaca; tiered polling + optional JWT SSE. **E2E covered.** |
 | Portfolio fields | Mostly implemented | Cash/positions from Alpaca; local stop/TP when mirrored; concentration in Go risk. |
 | Risk + execution modes | Implemented | `require_approval`, `auto_reject_breaches`, `bypass_risk`. |
-| Compose stack | Present | web, api, five agents, postgres, redis. |
+| Compose stack | Present | web, api, agent-runtime, postgres, redis. |
 
 **Known gaps (honest, not silent TBD):**
 

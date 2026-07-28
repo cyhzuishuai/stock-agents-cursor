@@ -3,6 +3,7 @@
 > 文件名含历史 `eod` 前缀；**产品节奏由激活策略决定**（pre-open / intraday），不是单一日终 cron。
 
 对应设计规格：`docs/superpowers/specs/2026-07-23-us-stock-paper-trading-agents-design.md`（V1 基线）。  
+**Agent Runtime 工具循环**：`docs/superpowers/specs/2026-07-28-agent-runtime-tool-loop-design.md`（**取代**五 Agent 单步链）。  
 **调度与 Runs 可观测性**：`docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`（**取代** V1「仅 EOD」节奏）。  
 **现金 / 持仓 / 订单权威**：`docs/superpowers/specs/2026-07-28-alpaca-paper-authority-design.md`（Phase 1 已落地）。
 
@@ -37,18 +38,17 @@ flowchart TB
     AlpOrd[订单 / 成交]
   end
 
-  subgraph agents [Python Agents — 只读提案]
-    Data[agent-data]
-    Research[agent-research]
-    Decision[agent-decision]
-    Portfolio[agent-portfolio]
-    RiskPy[agent-risk<br/>仅建议]
+  subgraph runtime [agent-runtime — 只读提案]
+    Analyst[Analyst graph<br/>工具循环]
+    Portfolio[Portfolio graph<br/>工具循环]
   end
 
   subgraph infra [基础设施]
     PG[(PostgreSQL)]
     Redis[(Redis)]
     MD[行情源 free/alpaca]
+    News[Finnhub 新闻]
+    Search[Tavily 网页搜索]
     LLM[LLM API]
   end
 
@@ -56,11 +56,8 @@ flowchart TB
   Auth --> WF
   Auth --> Approvals
   Approvals --> Broker
-  WF --> Data
-  WF --> Research
-  WF --> Decision
+  WF --> Analyst
   WF --> Portfolio
-  WF --> RiskPy
   WF --> RiskGo
   RiskGo -->|通过 / bypass| Broker
   RiskGo -->|超限| Approvals
@@ -71,18 +68,19 @@ flowchart TB
   Mirror --> PG
   WF --> PG
   WF --> Redis
-  Data --> MD
-  Research --> LLM
-  Decision --> LLM
+  Analyst --> MD
+  Analyst --> News
+  Analyst --> Search
+  Analyst --> LLM
   Portfolio --> LLM
 ```
 
 信任边界：
 
-- Agents **永不**调用 Alpaca Trading API，也不写入现金 / 持仓 / 订单。
+- agent-runtime **永不**调用 Alpaca Trading API，也不写入现金 / 持仓 / 订单。
 - **Alpaca Paper** 为现金、持仓、订单与成交价的权威；Go API 是唯一与 Alpaca Trading 交互的组件。
 - Go 在风控通过、`bypass_risk` 或审批 `approved` 后向 Alpaca 提交市价单；Postgres 仅存 runs / proposals / approvals 及订单镜像（审计）。
-- Python Risk 输出仅供审计；Go 规则引擎为最终判定（`bypass_risk` 时跳过）。
+- **Go 规则引擎**为最终风控判定（`bypass_risk` 时跳过）；无 Python Risk 步骤。
 
 ## 2. 工作流主流程（策略 tick / 手动）
 
@@ -90,15 +88,12 @@ flowchart TB
 flowchart TD
   Start([策略调度 pre-open/intraday<br/>或手动 Run now]) --> Lock{Redis 全局 busy 锁}
   Lock -->|获取失败| Abort([跳过 / 已有运行中])
-  Lock -->|成功| Create[创建 workflow_run<br/>加载账户快照 + 观察列表]
+  Lock -->|成功| Create[创建 workflow_run<br/>Alpaca 账户快照 + 观察列表 + risk_context]
 
-  Create --> S1[1. agent-data<br/>日线 OHLCV]
-  S1 --> S2[2. agent-research<br/>bias / thesis]
-  S2 --> S3[3. agent-decision<br/>buy/sell/hold 意图]
-  S3 --> S4[4. agent-portfolio<br/>可执行提案 qty/权重/止盈止损]
-  S4 --> S5[5. agent-risk<br/>flags / scores / auto|review]
+  Create --> S1[1. analyst<br/>LangGraph 工具循环<br/>→ analyst_result + trace]
+  S1 --> S2[2. portfolio<br/>LangGraph 工具循环<br/>→ portfolio_result + trace]
 
-  S5 --> Mode{execution_mode}
+  S2 --> Mode{execution_mode}
   Mode -->|bypass_risk| Submit[向 Alpaca 提交市价单<br/>client_order_id = proposal.id]
   Mode -->|require_approval / auto_reject| Eval[Go 风控逐笔评估<br/>risk_rule_configs]
 
@@ -120,12 +115,9 @@ flowchart TD
 
   S1 -.->|schema/infra 失败| Fail[run = failed<br/>无 Alpaca 提交]
   S2 -.-> Fail
-  S3 -.-> Fail
-  S4 -.-> Fail
-  S5 -.-> Fail
 ```
 
-步骤状态推进：`created` → `data` → `research` → `decision` → `portfolio` → `risk` → 风控 / 成交或审批。
+步骤状态推进：`created` → `analyst` → `portfolio` → 风控 / 成交或审批。
 
 ## 3. 单笔提案：风控与审批
 
@@ -145,8 +137,6 @@ flowchart LR
   H -->|approved| S
   H -->|rejected| R
   H -->|cancel run| C[pending 取消<br/>已提交订单保留]
-
-  Adv[Python risk 建议] -.->|仅审计| G
 ```
 
 V1 默认规则示例：
@@ -157,7 +147,7 @@ V1 默认规则示例：
 | 单票最大权重 | 20% |
 | 最低现金比例 | 10% |
 
-允许部分提交：未超限的提案立刻提交 Alpaca，超限提案按模式 reject 或等待审批。成交价以 Alpaca fill 为准，不再使用本地日线 close 作为成交权威。
+允许部分提交：未超限的提案立刻提交 Alpaca，超限提案按模式 reject 或等待审批。成交价以 Alpaca fill 为准；marks 来自 broker 持仓价或提案 `estimated_notional/qty`（无独立 data 步骤）。
 
 ## 4. Agent 调用链（时序）
 
@@ -166,31 +156,23 @@ sequenceDiagram
   participant Cron as Scheduler
   participant API as Go API
   participant R as Redis
-  participant D as agent-data
-  participant Re as agent-research
-  participant De as agent-decision
-  participant Po as agent-portfolio
-  participant Ri as agent-risk
+  participant RT as agent-runtime
   participant DB as PostgreSQL
 
   Cron->>API: 策略 tick /internal/eod/run<br/>(trigger=pre_open|intraday)
   API->>R: 获取全局 busy 锁
-  API->>DB: 创建 workflow_run<br/>(strategy_id + trigger) + 账户快照
+  API->>API: 构建 Alpaca 账户快照 + risk_context
+  API->>DB: 创建 workflow_run<br/>(strategy_id + trigger)
 
-  API->>D: POST /v1/run
-  D-->>API: data_result (+ schema 校验)
+  API->>RT: POST /v1/run (agent=analyst)
+  RT-->>API: {result: analyst_result, trace}
+  API->>DB: 存 workflow_step_results (完整 envelope)
+
+  API->>RT: POST /v1/run (agent=portfolio, prior.analyst)
+  RT-->>API: {result: portfolio_result, trace}
   API->>DB: 存 workflow_step_results
 
-  API->>Re: POST /v1/run (+ prior outputs)
-  Re-->>API: research_result
-  API->>De: POST /v1/run
-  De-->>API: decision_result
-  API->>Po: POST /v1/run
-  Po-->>API: portfolio_result (proposals)
-  API->>Ri: POST /v1/run
-  Ri-->>API: risk_advisory_result
-
-  API->>API: 风控评估（bypass_risk 时跳过）
+  API->>API: Go 风控评估（bypass_risk 时跳过）
   alt 允许提交
     API->>API: POST Alpaca 市价单
     API->>API: 轮询订单直至 terminal
@@ -212,3 +194,5 @@ sequenceDiagram
 | `cancelled` | 用户取消；待审取消；本 run 已成交保留 |
 
 `rejected` 是审批/提案状态，不是 run 状态。
+
+历史 run 可能仍含旧五步（data/research/decision/portfolio/risk）的 step 记录；新 run 仅含 `analyst` 与 `portfolio`。

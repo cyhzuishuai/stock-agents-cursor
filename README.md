@@ -1,6 +1,6 @@
 # stock-agents-cursor
 
-美股 **策略驱动** 纸面交易多智能体系统：激活策略决定开盘前 / 盘中调度节奏与风控执行模式；Go API 编排与 Alpaca Paper 网关；Python Agent 分析/决策；Next.js 总览、Runs 与审批。
+美股 **策略驱动** 纸面交易多智能体系统：激活策略决定开盘前 / 盘中调度节奏与风控执行模式；Go API 编排与 Alpaca Paper 网关；**agent-runtime**（Analyst + Portfolio 工具循环）分析/提案；Next.js 总览、Runs 与审批。
 
 产品说明：`docs/product-overview.md`  
 产品 PRD：`docs/prd.md`  
@@ -30,6 +30,12 @@ cp deploy/env.example deploy/.env
 | `JWT_SECRET` | 登录 JWT 密钥（务必改掉默认值） |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 单用户管理员账号 |
 | `LLM_API_KEY` / `LLM_BASE_URL` | 实模型时填写；本地可用 Compose override 的 `LLM_MODE=mock` |
+| `AGENT_RUNTIME_URL` | Go → agent-runtime（Compose 内默认 `http://agent-runtime:8001`） |
+| `FINNHUB_API_KEY` | 可选；新闻工具缺 key 时优雅降级 |
+| `WEB_SEARCH_ENABLED` | 默认 `true` |
+| `WEB_SEARCH_PROVIDER` | 默认 `tavily` |
+| `WEB_SEARCH_API_KEY` | 可选；网页搜索缺 key 时优雅降级 |
+| `MAX_TOOL_ROUNDS_ANALYST` / `MAX_TOOL_ROUNDS_PORTFOLIO` | 工具循环轮次上限（默认 8 / 3） |
 | `ALPACA_API_KEY` / `ALPACA_API_SECRET` | **必填**（Paper 交易与行情）；仅服务端持有，勿暴露给浏览器 |
 | `ALPACA_BASE_URL` | 默认 `https://paper-api.alpaca.markets` |
 | `ALPACA_DATA_BASE_URL` | 默认 `https://data.alpaca.markets` |
@@ -61,6 +67,7 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.override.ym
 |------|------|
 | Web | http://localhost:3000 |
 | API | http://localhost:8080 |
+| agent-runtime | http://localhost:8001 |
 
 健康检查：`curl http://localhost:8080/healthz`  
 默认登录：`admin` / `admin123`（以你的 `.env` 为准）
@@ -75,7 +82,8 @@ E2E 覆盖：Alpaca overview / portfolio / orders、strategies、手动 run 终�
 ```text
 apps/web/              Next.js 前端
 services/api/          Go (Gin) API + Alpaca 网关 + 策略调度 + 工作流
-services/agents/       Python Agent 容器（data/research/decision/portfolio/risk）
+services/agents/runtime/  agent-runtime（Analyst + Portfolio 工具循环）
+services/agents/common/   共享工具、行情、LLM 客户端
 packages/contracts/    JSON Schema / API DTO
 deploy/                Compose、env.example、.env（本地）、smoke / e2e 脚本
 ```

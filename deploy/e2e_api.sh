@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# API E2E against a running Compose stack (real Postgres/Redis/API/agents).
-# Uses LLM_MODE=mock via override for LLM agents.
+# API E2E against a running Compose stack (real Postgres/Redis/API/agent-runtime).
+# Uses LLM_MODE=mock via override for agent-runtime tool-loops.
 # Requires ALPACA_API_KEY/SECRET in deploy/.env — Overview/Portfolio/Orders
 # and EOD submits read/write Alpaca Paper (not the local ledger).
 # Prerequisites: docker compose up --build (healthy), then: ./deploy/e2e_api.sh

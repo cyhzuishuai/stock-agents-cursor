@@ -9,7 +9,7 @@
 
 ## 1. 产品定位
 
-本产品是一套**自托管**的美股 **Alpaca Paper** 纸面交易系统：由**激活策略**决定开盘前 / 盘中调度节奏与风控执行模式；Go API 负责编排、确定性风控与经纪商网关；五个 Python Agent 产出结构化分析与交易提案；Next.js 控制台提供总览、持仓、Runs、审批与设置。
+本产品是一套**自托管**的美股 **Alpaca Paper** 纸面交易系统：由**激活策略**决定开盘前 / 盘中调度节奏与风控执行模式；Go API 负责编排、确定性风控与经纪商网关；单一 **agent-runtime**（Analyst + Portfolio LangGraph 工具循环）产出结构化分析与交易提案；Next.js 控制台提供总览、持仓、Runs、审批与设置。
 
 一句话：**策略驱动节奏 → 多智能体提案 → Go 风控门控 → Alpaca Paper 成交权威 → 人工仅在需要时介入。**
 
@@ -44,19 +44,16 @@
 
 **系统默认策略「整体策略1」示例：** 开盘前 10 分钟（09:20 ET）；盘中 10:00–15:00 ET 每 60 分钟；`execution_mode=auto_reject_breaches`。
 
-### 3.2 五 Agent 工作流
+### 3.2 Analyst → Portfolio 工具循环
 
-顺序固定，契约为结构化 JSON：
+Go 注入 Alpaca 账户快照（现金 / 权益 / 持仓 / 未成交订单）与 `risk_context`，依次调用 **agent-runtime** 两次（`agent=analyst` → `agent=portfolio`）。每步返回 `{result, trace}`；Go 持久化完整 envelope，并将 `result` 传给下一步。Runs 详情可展开工具时间线（`trace.rounds`）。
 
-| 步骤 | Agent | 产出要点 |
+| 步骤 | Graph | 产出要点 |
 |------|--------|----------|
-| 1 | Data | 日线 OHLCV（行情源 `alpaca` 或开发回退 `free`） |
-| 2 | Research | 每标的 bias / confidence / thesis |
-| 3 | Decision | buy / sell / hold 意图 |
-| 4 | Portfolio | 可执行提案（数量/权重、止盈止损估计等） |
-| 5 | Risk（Python） | flags / scores / auto\|review（**仅建议**） |
+| 1 | Analyst | 每标的 bias / confidence / thesis / buy·sell·hold 意图（工具：日线、新闻、网页搜索、账户视图、风控上下文） |
+| 2 | Portfolio | 可执行提案（数量/权重、止盈止损估计等；工具：账户、风控、收盘价、`size_proposals`） |
 
-Agent **永不**调用 Alpaca Trading，也不直接改现金 / 持仓 / 订单。
+Agent-runtime **永不**调用 Alpaca Trading，也不直接改现金 / 持仓 / 订单。**Go 确定性风控**为最终门控（无 Python Risk 步骤）。
 
 ### 3.3 风控与执行模式
 
@@ -84,7 +81,7 @@ Agent **永不**调用 Alpaca Trading，也不直接改现金 / 持仓 / 订单�
 
 - 待审列表支持按笔 approve / reject（可附备注）；可取消整次 run（已提交订单保留）。
 - Runs 列表与详情展示状态、触发来源（`manual` / `pre_open` / `intraday` 等）、关联策略。
-- Run 详情可展开各步骤，查看 Agent 返回的 `payload_json`。
+- Run 详情可展开各步骤，查看 Agent 返回的 `payload_json`（含 `{result, trace}` 工具轨迹）。
 
 ### 3.6 控制台刷新
 
@@ -99,7 +96,7 @@ Agent **永不**调用 Alpaca Trading，也不直接改现金 / 持仓 / 订单�
 Web (Next.js, JWT)
   → Go API (Gin)：认证、调度、工作流、风控、审批、Alpaca 网关、可选 SSE
        → Alpaca Paper Trading / Market Data
-       → Python Agents：data → research → decision → portfolio → risk
+       → agent-runtime (Python)：Analyst → Portfolio 工具循环
   PostgreSQL：编排与审计数据
   Redis：工作流 busy 锁、短时缓存等
 ```
@@ -108,7 +105,7 @@ Web (Next.js, JWT)
 |------|------|
 | `web` | 登录与交易台 UI |
 | `api` | 编排、风控、经纪商、策略调度 |
-| `agent-*` | 五类 Agent 容器 |
+| `agent-runtime` | Analyst + Portfolio LangGraph 工具循环（单进程，:8001） |
 | `postgres` / `redis` | 持久化与锁/缓存 |
 
 部署以 Docker Compose 为主；本地 Web `http://localhost:3000`，API `http://localhost:8080`。细节见 [`deploy/README.md`](../deploy/README.md)。
@@ -131,7 +128,7 @@ Web (Next.js, JWT)
 
 ## 6. 典型一天（产品叙事）
 
-1. **开盘前**：激活策略在 09:20 ET（示例）触发 pre-open run；Data 拉日线 → 研究/决策/组合 → Risk 建议 → Go 按模式门控 → 合规则提交 Alpaca。
+1. **开盘前**：激活策略在 09:20 ET（示例）触发 pre-open run；Analyst 工具循环分析观察列表 → Portfolio 产出提案 → Go 按模式门控 → 合规则提交 Alpaca。
 2. **盘中**：例如每小时再跑；同一账户不并行跑两次工作流（Redis 全局 busy 锁）。
 3. **人工**：若为 `require_approval` 且有超限，管理员在 Approvals 处理；也可随时 Run now 做冒烟或补跑。
 4. **配置**：在 Settings 切换策略节奏或 execution_mode、调整观察列表与阈值；调度热重载，无需重启容器（策略侧）。
@@ -142,8 +139,8 @@ Run 终态简述：`executed`（无待审且提案均已终态）、`awaiting_ap
 
 ## 7. 信任边界（必读）
 
-1. Agents 只产出提案与建议，不写账、不下单。
-2. Go 规则引擎为风控最终判定（`bypass_risk` 时跳过）；Python Risk 仅审计。
+1. Agents 只产出提案，不写账、不下单。
+2. **Go 规则引擎**为风控最终判定（`bypass_risk` 时跳过）；无 Python Risk 步骤。
 3. Alpaca Paper 为账户与成交权威；本地账本路径不作为生产成交权威。
 4. 密钥与经纪商凭证仅服务端持有。
 
