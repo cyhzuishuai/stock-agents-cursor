@@ -18,6 +18,7 @@ type Config struct {
 	RiskMaxOrderNotional    float64
 	RiskMaxSingleNameWeight float64
 	RiskMinCashRatio        float64
+	AgentRuntimeURL         string
 	AgentDataURL            string
 	AgentResearchURL        string
 	AgentDecisionURL        string
@@ -80,6 +81,7 @@ func Load() (*Config, error) {
 		RiskMaxOrderNotional:    riskMaxOrderNotional,
 		RiskMaxSingleNameWeight: riskMaxSingleNameWeight,
 		RiskMinCashRatio:        riskMinCashRatio,
+		AgentRuntimeURL:         os.Getenv("AGENT_RUNTIME_URL"),
 		AgentDataURL:            os.Getenv("AGENT_DATA_URL"),
 		AgentResearchURL:        os.Getenv("AGENT_RESEARCH_URL"),
 		AgentDecisionURL:        os.Getenv("AGENT_DECISION_URL"),

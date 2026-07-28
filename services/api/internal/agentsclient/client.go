@@ -15,6 +15,7 @@ import (
 
 type Client struct {
 	HTTP                                                     *http.Client
+	RuntimeURL                                               string
 	DataURL, ResearchURL, DecisionURL, PortfolioURL, RiskURL string
 	MaxRetries                                               int
 }

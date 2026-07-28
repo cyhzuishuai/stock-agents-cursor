@@ -72,6 +72,7 @@ func main() {
 		eodRunner = &workflow.Runner{
 			DB: gormDB,
 			Agents: &agentsclient.Client{
+				RuntimeURL:   cfg.AgentRuntimeURL,
 				DataURL:      cfg.AgentDataURL,
 				ResearchURL:  cfg.AgentResearchURL,
 				DecisionURL:  cfg.AgentDecisionURL,

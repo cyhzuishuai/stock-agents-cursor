@@ -42,6 +42,20 @@ func TestLoadAlpacaConfig(t *testing.T) {
 	}
 }
 
+func TestLoadAgentRuntimeURL(t *testing.T) {
+	os.Clearenv()
+	os.Setenv("JWT_SECRET", "test-secret")
+	os.Setenv("AGENT_RUNTIME_URL", "http://agent-runtime:8001")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AgentRuntimeURL != "http://agent-runtime:8001" {
+		t.Fatalf("AgentRuntimeURL: got %q", cfg.AgentRuntimeURL)
+	}
+}
+
 func TestLoadAlpacaBaseURLDefault(t *testing.T) {
 	os.Clearenv()
 	os.Setenv("JWT_SECRET", "test-secret")
