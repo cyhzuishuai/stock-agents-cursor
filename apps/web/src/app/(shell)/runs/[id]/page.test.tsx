@@ -143,6 +143,96 @@ describe("RunDetailPage", () => {
     expect(within(roundTwo!).getByText(/lookback_days/i)).toBeTruthy();
   });
 
+  it("shows agent timeline and handoff for envelopes with events", async () => {
+    mockRunFetch(envelopeFixture);
+    const user = userEvent.setup();
+    render(<RunDetailPage />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /show agent timeline/i }),
+      ).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText(/handoff summary/i)).toBeTruthy();
+    expect(screen.getByText(/2 symbols/i)).toBeTruthy();
+    expect(
+      screen.getByText(/Does MSFT need reassessment after earnings\?/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /open in langsmith/i })).toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: /show agent timeline/i }),
+    );
+
+    const timeline = screen.getByLabelText(/agent timeline/i);
+    expect(within(timeline).getByText("plan")).toBeTruthy();
+    expect(within(timeline).getByText("reflect")).toBeTruthy();
+    expect(within(timeline).getByText("finalize")).toBeTruthy();
+  });
+
+  it("omits agent timeline when envelope has no events", async () => {
+    const withoutEvents = structuredClone(analystEnvelope) as Record<
+      string,
+      unknown
+    >;
+    delete (withoutEvents.trace as Record<string, unknown>).events;
+    delete withoutEvents.handoff;
+
+    mockRunFetch({
+      ...envelopeFixture,
+      steps: [
+        {
+          ...envelopeFixture.steps[0],
+          payload_json: JSON.stringify(withoutEvents),
+        },
+      ],
+    });
+    render(<RunDetailPage />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /show tool trace/i }),
+      ).toBeTruthy();
+    });
+
+    expect(
+      screen.queryByRole("button", { name: /show agent timeline/i }),
+    ).toBeNull();
+    expect(screen.queryByLabelText(/handoff summary/i)).toBeNull();
+  });
+
+  it("shows Open in LangSmith when langsmith_run_url is present", async () => {
+    const withLangsmith = structuredClone(analystEnvelope) as {
+      trace: Record<string, unknown>;
+    };
+    withLangsmith.trace.langsmith_run_url =
+      "https://smith.langchain.com/o/demo/projects/p/run/abc";
+
+    mockRunFetch({
+      ...envelopeFixture,
+      steps: [
+        {
+          ...envelopeFixture.steps[0],
+          payload_json: JSON.stringify(withLangsmith),
+        },
+      ],
+    });
+    render(<RunDetailPage />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("link", { name: /open in langsmith/i }),
+      ).toBeTruthy();
+    });
+
+    const link = screen.getByRole("link", { name: /open in langsmith/i });
+    expect(link.getAttribute("href")).toBe(
+      "https://smith.langchain.com/o/demo/projects/p/run/abc",
+    );
+    expect(link.getAttribute("target")).toBe("_blank");
+  });
+
   it("shows formatted Started in meta when created_at is set", async () => {
     mockRunFetch(legacyFixture);
     const { container } = render(<RunDetailPage />);

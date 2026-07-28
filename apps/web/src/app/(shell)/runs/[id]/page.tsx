@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { AgentTimeline } from "@/components/AgentTimeline";
+import { HandoffSummary } from "@/components/HandoffSummary";
 import { RunStatusBadge } from "@/components/RunStatusBadge";
 import { api } from "@/lib/api";
 import { formatStartedAt } from "@/lib/datetime";
@@ -300,6 +302,7 @@ function StepPayload({
   raw: string;
   envelope: AgentRunEnvelope | null;
 }) {
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
   const [legacyOpen, setLegacyOpen] = useState(false);
@@ -320,10 +323,28 @@ function StepPayload({
     );
   }
 
+  const events = envelope.trace.events ?? [];
+  const hasEvents = events.length > 0;
+  const langsmithUrl =
+    typeof envelope.trace.langsmith_run_url === "string" &&
+    envelope.trace.langsmith_run_url.trim()
+      ? envelope.trace.langsmith_run_url.trim()
+      : null;
+
   return (
     <div className="runs__step-payload">
       <StepResultSummary envelope={envelope} />
+      <HandoffSummary handoff={envelope.handoff} />
       <div className="runs__step-actions">
+        {hasEvents ? (
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => setTimelineOpen((v) => !v)}
+          >
+            {timelineOpen ? "Hide agent timeline" : "Show agent timeline"}
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn btn--ghost"
@@ -338,7 +359,18 @@ function StepPayload({
         >
           {rawOpen ? "Hide raw payload" : "Show raw payload"}
         </button>
+        {langsmithUrl ? (
+          <a
+            className="btn btn--ghost"
+            href={langsmithUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open in LangSmith
+          </a>
+        ) : null}
       </div>
+      {timelineOpen && hasEvents ? <AgentTimeline events={events} /> : null}
       {traceOpen ? <StepToolTrace trace={envelope.trace} /> : null}
       {rawOpen ? <pre className="runs__payload">{pretty}</pre> : null}
     </div>
