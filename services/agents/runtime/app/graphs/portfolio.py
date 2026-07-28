@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from stock_agents_common.llm_tools import ToolLLMClient
@@ -23,6 +24,7 @@ last closes, and size_proposals. Do not call tools yet."""
 SYSTEM_ACT = """You are a portfolio sizing agent.
 Work only on current_step; call tools or say step complete.
 Use account/risk views, last closes, and size_proposals to produce executable proposals.
+Prefer analyst handoff thesis/confidence when sizing; open_questions are informational.
 Skip hold intents. Never sell more than position qty. Respect cash constraints.
 When ready, return JSON:
 {"proposals":[{"symbol","side","qty","stop_loss?","take_profit?","estimated_notional","estimated_cash_impact","target_weight?"}], "warnings"?}
@@ -114,16 +116,28 @@ def align_portfolio_result(result: dict[str, Any], req: dict[str, Any]) -> dict[
 def _user_message(req: dict[str, Any], baseline: dict[str, Any] | None) -> str:
     prior = req.get("prior_step_outputs") or {}
     analyst = prior.get("analyst") or {}
-    return (
-        f"Trade date: {req.get('trade_date')}\n"
-        f"Watchlist: {req.get('watchlist')}\n"
-        f"Analyst items: {analyst.get('items') or []}\n"
-        f"Account: {req.get('account_snapshot')}\n"
-        f"Risk context: {req.get('risk_context') or {}}\n"
-        f"Baseline size_proposals: {(baseline or {}).get('proposals') or []}\n"
-        "Plan sizing steps, call tools as needed (including size_proposals). "
-        "Return portfolio_result JSON."
+    parts = [
+        f"Trade date: {req.get('trade_date')}",
+        f"Watchlist: {req.get('watchlist')}",
+        f"Analyst items: {analyst.get('items') or []}",
+    ]
+    handoff = prior.get("analyst_handoff")
+    if handoff:
+        parts.append(f"Analyst handoff: {json.dumps(handoff, ensure_ascii=False)}")
+    memory = prior.get("analyst_working_memory")
+    if memory:
+        parts.append(f"Analyst working_memory: {json.dumps(memory, ensure_ascii=False)}")
+    parts.extend(
+        [
+            f"Account: {req.get('account_snapshot')}",
+            f"Risk context: {req.get('risk_context') or {}}",
+            f"Baseline size_proposals: {(baseline or {}).get('proposals') or []}",
+            "Plan sizing steps, call tools as needed (including size_proposals). "
+            "Use analyst handoff/working_memory when present. "
+            "Return portfolio_result JSON.",
+        ]
     )
+    return "\n".join(parts)
 
 
 def _deterministic_baseline(ctx: RunContext, registry: dict[str, Any]) -> dict[str, Any] | None:

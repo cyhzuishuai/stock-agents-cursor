@@ -116,6 +116,56 @@ def test_portfolio_skips_holds_in_baseline(monkeypatch: pytest.MonkeyPatch, agen
     assert "AAPL" in symbols
 
 
+def test_portfolio_user_message_includes_handoff_and_memory():
+    from app.graphs.portfolio import _user_message
+
+    req = {
+        "trade_date": "2026-07-28",
+        "watchlist": ["AAPL"],
+        "account_snapshot": {},
+        "risk_context": {},
+        "prior_step_outputs": {
+            "analyst": {"items": [{"symbol": "AAPL", "side": "buy"}]},
+            "analyst_handoff": {
+                "thesis_by_symbol": {"AAPL": {"summary": "bullish", "bias": "bull", "confidence": 0.8}},
+                "open_questions": ["earnings?"],
+            },
+            "analyst_working_memory": {
+                "notes": ["watched AAPL"],
+                "evidence_refs": ["get_bars:AAPL"],
+                "open_questions": ["earnings?"],
+            },
+        },
+    }
+    msg = _user_message(req, {"proposals": []})
+    assert "analyst_handoff" in msg or "Analyst handoff" in msg
+    assert "bullish" in msg
+    assert "get_bars:AAPL" in msg
+    assert "Analyst items" in msg
+
+
+def test_portfolio_run_with_injected_handoff(
+    monkeypatch: pytest.MonkeyPatch, agent_run_request, mock_script_paths
+):
+    monkeypatch.setenv("LLM_MODE", "mock")
+    monkeypatch.setenv("MOCK_TOOL_SCRIPT", str(mock_script_paths["portfolio"]))
+    from app.graphs.portfolio import run_portfolio
+
+    req = _portfolio_request(agent_run_request)
+    req["prior_step_outputs"]["analyst_handoff"] = {
+        "thesis_by_symbol": {"AAPL": {"summary": "ok", "bias": "bull", "confidence": 0.7}},
+        "evidence_refs": [],
+    }
+    req["prior_step_outputs"]["analyst_working_memory"] = {
+        "notes": [],
+        "evidence_refs": [],
+        "open_questions": [],
+    }
+    out = run_portfolio(req)
+    validate(out["result"], "portfolio_result")
+    assert out["trace"]["stop_reason"]
+
+
 def test_portfolio_default_round_budget_completes_three_step_plan(
     monkeypatch: pytest.MonkeyPatch, agent_run_request, mock_script_paths
 ):
