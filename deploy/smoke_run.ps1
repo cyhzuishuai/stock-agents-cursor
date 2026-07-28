@@ -1,4 +1,4 @@
-# EOD integration smoke: healthz → login → POST /runs/eod → poll run status.
+# Workflow run smoke: healthz → login → POST /runs/trigger → poll run status.
 $ErrorActionPreference = "Stop"
 
 $ApiBase = if ($env:API_BASE_URL) { $env:API_BASE_URL } else { "http://localhost:8080" }
@@ -9,7 +9,7 @@ $PollTimeoutSec = if ($env:POLL_TIMEOUT) { [int]$env:POLL_TIMEOUT } else { 300 }
 $PollIntervalSec = if ($env:POLL_INTERVAL) { [int]$env:POLL_INTERVAL } else { 2 }
 
 function Write-SmokeLog([string]$Message) {
-    Write-Host "[smoke_eod] $Message"
+    Write-Host "[smoke_run] $Message"
 }
 
 function Wait-Healthz {
@@ -40,13 +40,13 @@ function Get-AuthToken {
     return $resp.token
 }
 
-function Start-EodRun([string]$Token) {
-    Write-SmokeLog "triggering EOD run..."
+function Start-RunTrigger([string]$Token) {
+    Write-SmokeLog "triggering workflow run..."
     $headers = @{ Authorization = "Bearer $Token" }
-    $resp = Invoke-RestMethod -Uri "$ApiBase/api/v1/runs/eod" -Method Post `
+    $resp = Invoke-RestMethod -Uri "$ApiBase/api/v1/runs/trigger" -Method Post `
         -Headers $headers -ContentType "application/json" -Body "{}" -TimeoutSec 600
-    if (-not $resp.run_id) { throw "EOD response missing run_id" }
-    Write-SmokeLog "EOD started run_id=$($resp.run_id)"
+    if (-not $resp.run_id) { throw "trigger response missing run_id" }
+    Write-SmokeLog "workflow run started run_id=$($resp.run_id)"
     return [string]$resp.run_id
 }
 
@@ -75,7 +75,7 @@ function Wait-RunTerminal([string]$Token, [string]$RunId) {
 try {
     Wait-Healthz
     $token = Get-AuthToken
-    $runId = Start-EodRun -Token $token
+    $runId = Start-RunTrigger -Token $token
     Wait-RunTerminal -Token $token -RunId $runId
     Write-SmokeLog "smoke passed"
     exit 0

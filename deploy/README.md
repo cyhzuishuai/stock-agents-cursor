@@ -6,7 +6,7 @@ Alpaca Paper is the source of truth for cash, equity, positions, orders, and fil
 
 ## Cadence (strategy-driven)
 
-Automatic runs come from the **active strategy** (pre-open + intraday jobs; hot-reload on activate/PATCH). Manual run: Web **Run now** or `POST /api/v1/runs/eod` / `POST /internal/eod/run` (path names are historical). `EOD_CRON` is legacy-only when no DB strategy is active. Spec: `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`.
+Automatic runs come from the **active strategy** (pre-open + intraday jobs; hot-reload on activate/PATCH). Manual run: Web **Run now** or `POST /api/v1/runs/trigger` / `POST /internal/runs/trigger`. `EOD_CRON` is legacy-only when no DB strategy is active. Spec: `docs/superpowers/specs/2026-07-28-strategy-scheduler-runs-observability-design.md`.
 
 ## Environment file (`.env`)
 
@@ -82,21 +82,21 @@ After the stack is up, run the integration smoke script from the repo root or `d
 **Linux / macOS / Git Bash:**
 
 ```bash
-chmod +x deploy/smoke_eod.sh
-./deploy/smoke_eod.sh
+chmod +x deploy/smoke_run.sh
+./deploy/smoke_run.sh
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-.\deploy\smoke_eod.ps1
+.\deploy\smoke_run.ps1
 ```
 
 The script:
 
 1. Waits for `GET /healthz` (`status: ok`)
 2. Logs in via `POST /api/v1/auth/login` and obtains a JWT
-3. Triggers a **manual** workflow run via `POST /api/v1/runs/eod`
+3. Triggers a **manual** workflow run via `POST /api/v1/runs/trigger`
 4. Polls `GET /api/v1/runs/:id` until status is `executed`, `awaiting_approval`, or `failed`
 5. Exits `0` on success (`executed` or `awaiting_approval`), `1` on `failed` or timeout
 
@@ -135,7 +135,7 @@ Verified against design specs via unit tests (`go test ./...` in `services/api`,
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Strategy schedule + manual trigger | Implemented | **DB active strategy is authoritative** (pre-open + intraday via `strategy.BuildJobSpecs`; hot-reload). `EOD_CRON` is **legacy only**. Manual: `POST /api/v1/runs/eod` / `POST /internal/eod/run`; web **Run now**. |
+| Strategy schedule + manual trigger | Implemented | **DB active strategy is authoritative** (pre-open + intraday via `strategy.BuildJobSpecs`; hot-reload). `EOD_CRON` is **legacy only**. Manual: `POST /api/v1/runs/trigger` / `POST /internal/runs/trigger`; web **Run now**. |
 | agent-runtime / broker boundary | Implemented | Analyst + Portfolio tool-loops proposal-only; Go submits to Alpaca Paper after risk gate or `bypass_risk`. |
 | Alpaca Paper authority | Implemented (Phase 1 + SSE client) | Bars, broker submit, Overview/Portfolio/Orders from Alpaca; tiered polling + optional JWT SSE. **E2E covered.** |
 | Portfolio fields | Mostly implemented | Cash/positions from Alpaca; local stop/TP when mirrored; concentration in Go risk. |

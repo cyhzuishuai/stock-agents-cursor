@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# EOD integration smoke: healthz → login → POST /runs/eod → poll run status.
+# Workflow run smoke: healthz → login → POST /runs/trigger → poll run status.
 set -euo pipefail
 
 API_BASE="${API_BASE_URL:-http://localhost:8080}"
@@ -9,7 +9,7 @@ HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-120}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-300}"
 POLL_INTERVAL="${POLL_INTERVAL:-2}"
 
-log() { printf '[smoke_eod] %s\n' "$*"; }
+log() { printf '[smoke_run] %s\n' "$*"; }
 die() { log "ERROR: $*"; exit 1; }
 
 json_get() {
@@ -48,17 +48,17 @@ login() {
   log "login ok"
 }
 
-post_eod() {
-  log "triggering EOD run..."
+trigger_run() {
+  log "triggering workflow run..."
   local resp
-  resp=$(curl -sf -X POST "${API_BASE}/api/v1/runs/eod" \
+  resp=$(curl -sf -X POST "${API_BASE}/api/v1/runs/trigger" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
     -d '{}') \
-    || die "POST /runs/eod failed"
+    || die "POST /runs/trigger failed"
   RUN_ID=$(printf '%s' "$resp" | json_get '["run_id"]')
-  [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]] || die "EOD response missing run_id"
-  log "EOD started run_id=${RUN_ID}"
+  [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]] || die "trigger response missing run_id"
+  log "workflow run started run_id=${RUN_ID}"
 }
 
 poll_run() {
@@ -82,7 +82,7 @@ poll_run() {
 
 wait_healthz
 login
-post_eod
+trigger_run
 poll_run
 log "smoke passed"
 exit 0

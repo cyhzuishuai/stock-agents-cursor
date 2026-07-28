@@ -5,15 +5,15 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { RunStatusBadge } from "@/components/RunStatusBadge";
 import { api } from "@/lib/api";
-import type { EodRunResponse, RunListItem } from "@/lib/types";
+import type { RunListItem, RunTriggerResponse } from "@/lib/types";
 
 export default function RunsPage() {
   const router = useRouter();
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [eodLoading, setEodLoading] = useState(false);
-  const [eodError, setEodError] = useState<string | null>(null);
+  const [runTriggerLoading, setRunTriggerLoading] = useState(false);
+  const [runTriggerError, setRunTriggerError] = useState<string | null>(null);
 
   const loadRuns = useCallback(async () => {
     const response = await api.get<RunListItem[]>("/api/v1/runs");
@@ -46,16 +46,16 @@ export default function RunsPage() {
     };
   }, []);
 
-  async function handleRunEod() {
-    setEodError(null);
-    setEodLoading(true);
+  async function handleRunTrigger() {
+    setRunTriggerError(null);
+    setRunTriggerLoading(true);
     try {
-      const response = await api.post<EodRunResponse>("/api/v1/runs/eod", {});
+      const response = await api.post<RunTriggerResponse>("/api/v1/runs/trigger", {});
       router.push(`/runs/${response.run_id}`);
     } catch (err) {
-      setEodError(err instanceof Error ? err.message : "Failed to start run");
+      setRunTriggerError(err instanceof Error ? err.message : "Failed to start run");
     } finally {
-      setEodLoading(false);
+      setRunTriggerLoading(false);
     }
   }
 
@@ -82,10 +82,10 @@ export default function RunsPage() {
             <button
               type="button"
               className="btn btn--primary"
-              disabled={eodLoading}
-              onClick={() => void handleRunEod()}
+              disabled={runTriggerLoading}
+              onClick={() => void handleRunTrigger()}
             >
-              {eodLoading ? "Starting…" : "Run now"}
+              {runTriggerLoading ? "Starting…" : "Run now"}
             </button>
             <button
               type="button"
@@ -99,7 +99,7 @@ export default function RunsPage() {
       </header>
 
       {error ? <p className="alert" role="alert">{error}</p> : null}
-      {eodError ? <p className="alert" role="alert">{eodError}</p> : null}
+      {runTriggerError ? <p className="alert" role="alert">{runTriggerError}</p> : null}
 
       <section className="panel">
         {runs.length === 0 ? (

@@ -179,11 +179,11 @@ export interface RunDetail {
   orders: Order[];
 }
 
-export interface EodRunRequest {
+export interface RunTriggerRequest {
   trade_date?: string;
 }
 
-export interface EodRunResponse {
+export interface RunTriggerResponse {
   run_id: number;
 }
 

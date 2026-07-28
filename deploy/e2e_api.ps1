@@ -1,7 +1,7 @@
 # API E2E against a running Compose stack (real Postgres/Redis/API/agent-runtime).
 # Uses LLM_MODE=mock via override for agent-runtime tool-loops.
 # Requires ALPACA_API_KEY/SECRET in deploy/.env — Overview/Portfolio/Orders
-# and EOD submits read/write Alpaca Paper (not the local ledger).
+# and workflow run trigger submits read/write Alpaca Paper (not the local ledger).
 # Prerequisites: docker compose up --build (healthy), then:
 #   powershell -File deploy/e2e_api.ps1
 $ErrorActionPreference = "Stop"
@@ -105,11 +105,11 @@ try {
             "Eastern Standard Time"
         ).ToString("yyyy-MM-dd")
     }
-    $eodBody = (@{ trade_date = $tradeDate } | ConvertTo-Json -Compress)
-    Write-E2E "POST /runs/eod trade_date=$tradeDate (US/Eastern)"
-    $eod = Invoke-Authed -Method Post -Path "/api/v1/runs/eod" -Token $token -Body $eodBody
-    Assert-True ([bool]$eod.run_id) "POST /runs/eod returns run_id"
-    $runId = [string]$eod.run_id
+    $triggerBody = (@{ trade_date = $tradeDate } | ConvertTo-Json -Compress)
+    Write-E2E "POST /runs/trigger trade_date=$tradeDate (US/Eastern)"
+    $triggerResp = Invoke-Authed -Method Post -Path "/api/v1/runs/trigger" -Token $token -Body $triggerBody
+    Assert-True ([bool]$triggerResp.run_id) "POST /runs/trigger returns run_id"
+    $runId = [string]$triggerResp.run_id
     Write-E2E "run_id=$runId"
 
     $deadline = (Get-Date).AddSeconds($PollTimeoutSec)
@@ -123,8 +123,8 @@ try {
         }
         Start-Sleep -Seconds $PollIntervalSec
     }
-    Assert-True ($null -ne $terminal) "EOD run reaches terminal status"
-    Assert-True ($terminal.status -ne "failed") "EOD run is not failed (got $($terminal.status))"
+    Assert-True ($null -ne $terminal) "workflow run reaches terminal status"
+    Assert-True ($terminal.status -ne "failed") "workflow run is not failed (got $($terminal.status))"
     Write-E2E "terminal status=$($terminal.status)"
 
     $approvals = Invoke-Authed -Method Get -Path "/api/v1/approvals?status=pending" -Token $token

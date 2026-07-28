@@ -2,7 +2,7 @@
 # API E2E against a running Compose stack (real Postgres/Redis/API/agent-runtime).
 # Uses LLM_MODE=mock via override for agent-runtime tool-loops.
 # Requires ALPACA_API_KEY/SECRET in deploy/.env — Overview/Portfolio/Orders
-# and EOD submits read/write Alpaca Paper (not the local ledger).
+# and workflow run trigger submits read/write Alpaca Paper (not the local ledger).
 # Prerequisites: docker compose up --build (healthy), then: ./deploy/e2e_api.sh
 set -euo pipefail
 
@@ -83,12 +83,12 @@ assert_true 1 "GET /strategies returns list"
 # Default: US/Eastern calendar date today (same as API defaultTradeDate).
 # Override with EOD_TRADE_DATE if needed. Same trade_date may be re-run (busy lock only).
 TRADE_DATE="${EOD_TRADE_DATE:-$(python3 -c 'from datetime import datetime; from zoneinfo import ZoneInfo; print(datetime.now(ZoneInfo("America/New_York")).date().isoformat())')}"
-log "POST /runs/eod trade_date=${TRADE_DATE} (US/Eastern)"
-eod="$(curl -fsS --max-time 600 -X POST "${API_BASE_URL}/api/v1/runs/eod" \
+log "POST /runs/trigger trade_date=${TRADE_DATE} (US/Eastern)"
+trigger_resp="$(curl -fsS --max-time 600 -X POST "${API_BASE_URL}/api/v1/runs/trigger" \
   -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
   -d "{\"trade_date\":\"${TRADE_DATE}\"}")"
-RUN_ID="$(printf '%s' "$eod" | python3 -c "import json,sys; print(json.load(sys.stdin).get('run_id') or '')")"
-[[ -n "$RUN_ID" ]] && assert_true 1 "POST /runs/eod returns run_id" || assert_true 0 "POST /runs/eod returns run_id"
+RUN_ID="$(printf '%s' "$trigger_resp" | python3 -c "import json,sys; print(json.load(sys.stdin).get('run_id') or '')")"
+[[ -n "$RUN_ID" ]] && assert_true 1 "POST /runs/trigger returns run_id" || assert_true 0 "POST /runs/trigger returns run_id"
 log "run_id=${RUN_ID}"
 
 deadline=$((SECONDS + POLL_TIMEOUT))
@@ -101,8 +101,8 @@ while (( SECONDS < deadline )); do
   esac
   sleep "$POLL_INTERVAL"
 done
-[[ -n "$TERMINAL" ]] && assert_true 1 "EOD run reaches terminal status" || assert_true 0 "EOD run reaches terminal status"
-[[ "$TERMINAL" != "failed" ]] && assert_true 1 "EOD run is not failed (got ${TERMINAL})" || assert_true 0 "EOD run is not failed (got ${TERMINAL})"
+[[ -n "$TERMINAL" ]] && assert_true 1 "workflow run reaches terminal status" || assert_true 0 "workflow run reaches terminal status"
+[[ "$TERMINAL" != "failed" ]] && assert_true 1 "workflow run is not failed (got ${TERMINAL})" || assert_true 0 "workflow run is not failed (got ${TERMINAL})"
 log "terminal status=${TERMINAL}"
 
 auth "${API_BASE_URL}/api/v1/approvals?status=pending" >/dev/null

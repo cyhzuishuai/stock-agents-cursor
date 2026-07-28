@@ -70,7 +70,7 @@ describe("api client", () => {
     setToken("x");
     clearToken();
 
-    await api.post("/api/v1/runs/eod", {});
+    await api.post("/api/v1/runs/trigger", {});
 
     const [, init] = vi.mocked(fetch).mock.calls[0]!;
     const headers = init?.headers as Record<string, string>;
