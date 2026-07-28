@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RunDetailPage from "./page";
 import type { RunDetail } from "@/lib/types";
+import analystEnvelope from "../../../../../../../packages/contracts/fixtures/agent_run_response.valid.json";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "1" }),
@@ -20,7 +21,7 @@ vi.mock("next/link", () => ({
   }) => <a href={href}>{children}</a>,
 }));
 
-const fixture: RunDetail = {
+const legacyFixture: RunDetail = {
   id: 1,
   trade_date: "2026-07-28",
   status: "completed",
@@ -40,29 +41,50 @@ const fixture: RunDetail = {
   orders: [],
 };
 
-describe("RunDetailPage", () => {
-  beforeEach(() => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input) => {
-        const url = String(input);
-        if (url.includes("/api/v1/runs/1")) {
-          return new Response(JSON.stringify(fixture), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-        return new Response("not found", { status: 404 });
-      }),
-    );
-  });
+const envelopeFixture: RunDetail = {
+  id: 1,
+  trade_date: "2026-07-28",
+  status: "completed",
+  strategy_id: 1,
+  strategy_name: "整体策略1",
+  trigger: "manual",
+  steps: [
+    {
+      id: 20,
+      run_id: 1,
+      step: "analyst",
+      status: "ok",
+      payload_json: JSON.stringify(analystEnvelope),
+    },
+  ],
+  proposals: [],
+  orders: [],
+};
 
+function mockRunFetch(run: RunDetail) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input) => {
+      const url = String(input);
+      if (url.includes(`/api/v1/runs/${run.id}`)) {
+        return new Response(JSON.stringify(run), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }),
+  );
+}
+
+describe("RunDetailPage", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it("shows pretty JSON payload after expanding", async () => {
+  it("shows pretty JSON payload after expanding legacy step", async () => {
+    mockRunFetch(legacyFixture);
     const user = userEvent.setup();
     render(<RunDetailPage />);
 
@@ -77,5 +99,42 @@ describe("RunDetailPage", () => {
     expect(screen.getByText(/thesis/)).toBeTruthy();
     expect(screen.getByText(/manual/)).toBeTruthy();
     expect(screen.getByText(/整体策略1/)).toBeTruthy();
+  });
+
+  it("renders analyst result summary and tool trace for envelope payloads", async () => {
+    mockRunFetch(envelopeFixture);
+    const user = userEvent.setup();
+    render(<RunDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Analyst")).toBeTruthy();
+      expect(screen.getByText("AAPL")).toBeTruthy();
+      expect(screen.getByText("buy")).toBeTruthy();
+      expect(screen.getByText("bull")).toBeTruthy();
+      expect(screen.getByText(/stop: final/i)).toBeTruthy();
+    });
+
+    expect(
+      screen.getByRole("button", { name: /show tool trace/i }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /show raw payload/i }),
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /show tool trace/i }));
+
+    expect(screen.getByText(/Round 1/i)).toBeTruthy();
+    expect(screen.getByText(/get_account_view/i)).toBeTruthy();
+    expect(screen.getByText(/get_daily_bars/i)).toBeTruthy();
+
+    const roundOne = screen.getByText(/Round 1/i).closest("li");
+    expect(roundOne).toBeTruthy();
+    expect(within(roundOne!).getByText(/820 ms/)).toBeTruthy();
+    expect(within(roundOne!).getByText(/args: \{\}/)).toBeTruthy();
+    expect(within(roundOne!).getByText(/100000/)).toBeTruthy();
+
+    const roundTwo = screen.getByText(/Round 2/i).closest("li");
+    expect(roundTwo).toBeTruthy();
+    expect(within(roundTwo!).getByText(/lookback_days/i)).toBeTruthy();
   });
 });

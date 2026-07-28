@@ -80,6 +80,75 @@ export interface WorkflowStep {
   payload_json: string;
 }
 
+export type AgentStopReason = "final" | "max_rounds" | "timeout" | "error";
+
+export interface AgentToolCall {
+  id?: string;
+  name: string;
+  args?: Record<string, unknown>;
+}
+
+export interface AgentToolResult {
+  id?: string;
+  name: string;
+  ok: boolean;
+  latency_ms?: number;
+  result_preview?: string | null;
+  error?: string | null;
+}
+
+export interface AgentTraceRound {
+  i?: number;
+  llm?: { model?: string; latency_ms?: number };
+  assistant?: {
+    content?: string | null;
+    tool_calls?: AgentToolCall[];
+  };
+  tools?: AgentToolResult[];
+}
+
+export interface AgentTrace {
+  agent: "analyst" | "portfolio";
+  started_at?: string;
+  ended_at?: string;
+  rounds: AgentTraceRound[];
+  stop_reason?: AgentStopReason;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+}
+
+export interface AnalystResultItem {
+  symbol: string;
+  bias: string;
+  side: string;
+  confidence?: number;
+  thesis?: string;
+  urgency?: string;
+  rationale?: string;
+}
+
+export interface AnalystResult {
+  items: AnalystResultItem[];
+  warnings?: string[];
+}
+
+export interface PortfolioProposalResult {
+  symbol: string;
+  side: string;
+  qty: number;
+  estimated_notional?: number;
+  [key: string]: unknown;
+}
+
+export interface PortfolioResult {
+  proposals: PortfolioProposalResult[];
+  warnings?: string[];
+}
+
+export interface AgentRunEnvelope {
+  result: AnalystResult | PortfolioResult | Record<string, unknown>;
+  trace: AgentTrace;
+}
+
 export interface TradeProposal {
   id: number;
   run_id: number;
