@@ -1,4 +1,4 @@
-"""PortfolioGraph: size proposals (+ short tool loop) → portfolio_result."""
+"""PortfolioGraph: plan → act → reflect → finalize → portfolio_result."""
 
 from __future__ import annotations
 
@@ -13,13 +13,26 @@ from stock_agents_common.tools import (
     size_proposals,
 )
 
-from app.graphs.loop import execute_tool_call, openai_tool_schema, run_tool_loop
+from app.graphs.loop import execute_tool_call, openai_tool_schema
+from app.graphs.plan_loop import run_plan_loop
 
-SYSTEM_PROMPT = """You are a portfolio sizing agent.
+SYSTEM_PLAN = """You are a portfolio sizing planner.
+Output JSON {steps:[{id,title,status,tool_hint?}]} covering account/risk views,
+last closes, and size_proposals. Do not call tools yet."""
+
+SYSTEM_ACT = """You are a portfolio sizing agent.
+Work only on current_step; call tools or say step complete.
 Use account/risk views, last closes, and size_proposals to produce executable proposals.
 Skip hold intents. Never sell more than position qty. Respect cash constraints.
-Return JSON: {"proposals":[{"symbol","side","qty","stop_loss?","take_profit?","estimated_notional","estimated_cash_impact","target_weight?"}], "warnings"?}
+When ready, return JSON:
+{"proposals":[{"symbol","side","qty","stop_loss?","take_profit?","estimated_notional","estimated_cash_impact","target_weight?"}], "warnings"?}
 """
+
+SYSTEM_REFLECT = """Given plan + last tools, return JSON
+{decision, step_id?, reason, plan_patch?}
+where decision is continue|mark_step_done|revise_plan|finalize.
+Use mark_step_done when the current step is complete.
+Use finalize when ready to emit portfolio_result JSON."""
 
 
 def _tool_schemas() -> list[dict[str, Any]]:
@@ -108,7 +121,8 @@ def _user_message(req: dict[str, Any], baseline: dict[str, Any] | None) -> str:
         f"Account: {req.get('account_snapshot')}\n"
         f"Risk context: {req.get('risk_context') or {}}\n"
         f"Baseline size_proposals: {(baseline or {}).get('proposals') or []}\n"
-        "Call tools as needed (including size_proposals). Return portfolio_result JSON."
+        "Plan sizing steps, call tools as needed (including size_proposals). "
+        "Return portfolio_result JSON."
     )
 
 
@@ -138,10 +152,12 @@ def run_portfolio(
     registry = _tool_registry()
     baseline = _deterministic_baseline(run_ctx, registry)
 
-    return run_tool_loop(
+    return run_plan_loop(
         agent="portfolio",
         req=req,
-        system=SYSTEM_PROMPT,
+        system_plan=SYSTEM_PLAN,
+        system_act=SYSTEM_ACT,
+        system_reflect=SYSTEM_REFLECT,
         user_message=_user_message(req, baseline),
         tools_schema=_tool_schemas(),
         tool_registry=registry,

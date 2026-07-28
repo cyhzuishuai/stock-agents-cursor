@@ -7,6 +7,16 @@ import pytest
 from stock_agents_common.schemas import validate
 
 
+def _minimal_plan_script(*, rounds: list, reflect: list | None = None, steps: list | None = None) -> dict:
+    """Build a mock script with plan/reflect so run_plan_loop can execute."""
+    plan_steps = steps or [{"id": "s1", "title": "Gather evidence", "status": "pending"}]
+    return {
+        "plan": {"steps": plan_steps},
+        "reflect": reflect or [{"decision": "finalize", "reason": "done"}],
+        "rounds": rounds,
+    }
+
+
 def test_analyst_run_returns_result_and_trace(monkeypatch: pytest.MonkeyPatch, agent_run_request, mock_script_paths):
     monkeypatch.setenv("LLM_MODE", "mock")
     monkeypatch.setenv("MOCK_TOOL_SCRIPT", str(mock_script_paths["analyst"]))
@@ -21,7 +31,12 @@ def test_analyst_run_returns_result_and_trace(monkeypatch: pytest.MonkeyPatch, a
     assert out["trace"]["agent"] == "analyst"
     assert out["trace"]["rounds"]
     assert out["trace"]["stop_reason"] in {"final", "max_rounds"}
+    assert out["trace"].get("plan")
+    assert any(e.get("type") == "plan" for e in (out["trace"].get("events") or []))
+    assert "handoff" in out
+    assert out["handoff"].get("thesis_by_symbol")
     validate(out["result"], "analyst_result")
+    validate(out["handoff"], "agent_handoff")
     validate(out, "agent_run_response")
 
     symbols = {item["symbol"] for item in out["result"]["items"]}
@@ -32,27 +47,27 @@ def test_analyst_aligns_missing_symbols_to_hold(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setenv("LLM_MODE", "mock")
     script = tmp_path / "analyst_partial.json"
     script.write_text(
-        """
-{
-  "rounds": [
-    {
-      "content_json": {
-        "items": [
-          {
-            "symbol": "AAPL",
-            "bias": "bull",
-            "confidence": 0.7,
-            "thesis": "Momentum",
-            "side": "buy",
-            "urgency": "normal",
-            "rationale": "Above MA"
-          }
-        ]
-      }
-    }
-  ]
-}
-""".strip(),
+        json.dumps(
+            _minimal_plan_script(
+                rounds=[
+                    {
+                        "content_json": {
+                            "items": [
+                                {
+                                    "symbol": "AAPL",
+                                    "bias": "bull",
+                                    "confidence": 0.7,
+                                    "thesis": "Momentum",
+                                    "side": "buy",
+                                    "urgency": "normal",
+                                    "rationale": "Above MA",
+                                }
+                            ]
+                        }
+                    }
+                ]
+            )
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("MOCK_TOOL_SCRIPT", str(script))
@@ -151,7 +166,10 @@ def test_analyst_accepts_think_wrapped_markdown_json(
         "```\n"
     )
     script = tmp_path / "analyst_think.json"
-    script.write_text(json.dumps({"rounds": [{"content": wrapped}]}), encoding="utf-8")
+    script.write_text(
+        json.dumps(_minimal_plan_script(rounds=[{"content": wrapped}])),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("MOCK_TOOL_SCRIPT", str(script))
 
     from app.graphs.analyst import run_analyst
@@ -173,15 +191,17 @@ def test_analyst_max_rounds_falls_back_to_hold_defaults(
     script = tmp_path / "analyst_exhaust.json"
     script.write_text(
         json.dumps(
-            {
-                "rounds": [
+            _minimal_plan_script(
+                steps=[{"id": "s1", "title": "Account", "status": "pending"}],
+                reflect=[{"decision": "continue", "reason": "keep going"}],
+                rounds=[
                     {
                         "tool_calls": [
                             {"id": "1", "name": "get_account_view", "args": {}},
                         ]
                     }
-                ]
-            }
+                ],
+            )
         ),
         encoding="utf-8",
     )
@@ -212,7 +232,11 @@ def test_analyst_empty_non_json_falls_back_without_raising(
     monkeypatch.setenv("LLM_MODE", "mock")
     script = tmp_path / "analyst_garbage.json"
     script.write_text(
-        json.dumps({"rounds": [{"content": "<think>no final answer</think> sorry"}]}),
+        json.dumps(
+            _minimal_plan_script(
+                rounds=[{"content": "<think>no final answer</think> sorry"}]
+            )
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("MOCK_TOOL_SCRIPT", str(script))

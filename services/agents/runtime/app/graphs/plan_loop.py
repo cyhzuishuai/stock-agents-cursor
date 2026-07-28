@@ -464,12 +464,13 @@ def run_plan_loop(
         candidate = extract_json_from_content(content)
         result: dict[str, Any] | None = None
         try:
-            result = _try_align(candidate)
+            if candidate is not None:
+                result = _try_align(candidate)
         except Exception:  # noqa: BLE001 — repair path
             result = None
 
         if result is None:
-            # Same-model repair once via complete_tools with empty tools.
+            # Same-model repair once — never switch provider (same client instance).
             repair_system = (
                 f"Fix JSON to schema '{result_schema}'. Return ONLY valid JSON object. "
                 "Do not call tools."
@@ -482,20 +483,36 @@ def run_plan_loop(
                         "content": f"Previous invalid content:\n{content}\n\nReturn corrected JSON only.",
                     }
                 ]
+            else:
+                repair_messages = repair_messages + [
+                    {
+                        "role": "user",
+                        "content": (
+                            f"No valid {result_schema} JSON was produced. "
+                            "Return a corrected JSON object matching the schema only."
+                        ),
+                    }
+                ]
             try:
                 resp = client.complete_tools(repair_system, repair_messages, [])
                 _accumulate_usage(usage_totals, resp)
                 repaired = extract_json_from_content(resp.get("content"))
-                result = _try_align(repaired)
+                if repaired is not None:
+                    result = _try_align(repaired)
                 _append_event(events, "llm", phase="repair", **_llm_meta(resp))
             except Exception:  # noqa: BLE001
                 result = None
 
         if result is None:
+            # Match run_tool_loop: baseline → final; analyst hold defaults → max_rounds.
             try:
                 result = _try_align(_fallback_candidate())
-                if result is not None and stop_reason not in {"final", "max_rounds", "timeout"}:
-                    stop_reason = "max_rounds"
+                if result is not None:
+                    if bag.get("last_size_proposals") or bag.get("baseline"):
+                        if stop_reason not in {"final", "max_rounds", "timeout"}:
+                            stop_reason = "final"
+                    else:
+                        stop_reason = "max_rounds"
             except Exception:  # noqa: BLE001
                 result = None
 

@@ -1,4 +1,4 @@
-"""AnalystGraph: evidence-gathering tool loop → analyst_result."""
+"""AnalystGraph: plan → act → reflect → finalize → analyst_result."""
 
 from __future__ import annotations
 
@@ -14,10 +14,16 @@ from stock_agents_common.tools import (
     web_search,
 )
 
-from app.graphs.loop import openai_tool_schema, run_tool_loop, web_search_enabled
+from app.graphs.loop import openai_tool_schema, web_search_enabled
+from app.graphs.plan_loop import run_plan_loop
 
-SYSTEM_PROMPT = """You are an equity analyst agent with tools.
-Gather evidence via tools (daily bars, news, web search, account/risk views), then return JSON:
+SYSTEM_PLAN = """You are an equity analyst planner.
+Output JSON {steps:[{id,title,status,tool_hint?}]} covering evidence gathering for the watchlist.
+Do not call tools yet. Prefer steps that fetch account/risk views, daily bars, and news."""
+
+SYSTEM_ACT = """You are an equity analyst agent with tools.
+Work only on current_step; call tools or say step complete.
+When all evidence is gathered, return JSON:
 {"items":[{"symbol","bias","confidence","thesis","side","urgency","rationale","evidence"?}], "warnings"?}
 Rules:
 - Cover every watchlist symbol.
@@ -27,6 +33,12 @@ Rules:
 - evidence MUST be an array of short strings (not one paragraph).
 - warnings MUST be an array of strings (or omit).
 - Weak evidence → hold + neutral + low confidence. Never invent conviction."""
+
+SYSTEM_REFLECT = """Given plan + last tools, return JSON
+{decision, step_id?, reason, plan_patch?}
+where decision is continue|mark_step_done|revise_plan|finalize.
+Use mark_step_done when the current step's evidence is collected.
+Use finalize when ready to emit analyst_result JSON."""
 
 
 def _tool_schemas() -> list[dict[str, Any]]:
@@ -212,6 +224,38 @@ def align_analyst_result(result: dict[str, Any], req: dict[str, Any]) -> dict[st
     return aligned
 
 
+def build_analyst_handoff(
+    result: dict[str, Any],
+    working_memory: dict[str, Any],
+    req: dict[str, Any],
+) -> dict[str, Any]:
+    """Map analyst_result items + working_memory evidence into agent_handoff."""
+    _ = req
+    thesis_by_symbol: dict[str, Any] = {}
+    for item in result.get("items") or []:
+        if not isinstance(item, dict) or "symbol" not in item:
+            continue
+        symbol = str(item["symbol"])
+        conf = item.get("confidence")
+        try:
+            conf_f = float(conf) if conf is not None else 0.0
+        except (TypeError, ValueError):
+            conf_f = 0.0
+        thesis_by_symbol[symbol] = {
+            "summary": str(item.get("thesis") or ""),
+            "bias": str(item.get("bias") or "neutral"),
+            "confidence": conf_f,
+        }
+    handoff: dict[str, Any] = {
+        "thesis_by_symbol": thesis_by_symbol,
+        "evidence_refs": list(working_memory.get("evidence_refs") or []),
+    }
+    open_questions = working_memory.get("open_questions")
+    if open_questions:
+        handoff["open_questions"] = list(open_questions)
+    return handoff
+
+
 def _user_message(req: dict[str, Any]) -> str:
     return (
         f"Trade date: {req.get('trade_date')}\n"
@@ -219,7 +263,8 @@ def _user_message(req: dict[str, Any]) -> str:
         f"Account cash: {(req.get('account_snapshot') or {}).get('cash')}\n"
         f"Open orders: {(req.get('account_snapshot') or {}).get('open_orders') or []}\n"
         f"Risk context: {req.get('risk_context') or {}}\n"
-        "Use tools as needed, then return analyst_result JSON covering every watchlist symbol."
+        "Plan evidence gathering, use tools as needed, then return analyst_result JSON "
+        "covering every watchlist symbol."
     )
 
 
@@ -229,10 +274,12 @@ def run_analyst(
     llm_client: ToolLLMClient | None = None,
     ctx: RunContext | None = None,
 ) -> dict[str, Any]:
-    return run_tool_loop(
+    return run_plan_loop(
         agent="analyst",
         req=req,
-        system=SYSTEM_PROMPT,
+        system_plan=SYSTEM_PLAN,
+        system_act=SYSTEM_ACT,
+        system_reflect=SYSTEM_REFLECT,
         user_message=_user_message(req),
         tools_schema=_tool_schemas(),
         tool_registry=_tool_registry(),
@@ -240,4 +287,5 @@ def run_analyst(
         align_result=align_analyst_result,
         llm_client=llm_client,
         ctx=ctx,
+        build_handoff=build_analyst_handoff,
     )

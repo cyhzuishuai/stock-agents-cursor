@@ -213,3 +213,93 @@ def test_revise_plan_list_patch_skips_complete_plan_and_first_plan_is_clean():
     assert out["trace"]["stop_reason"] == "final"
     assert any(e.get("type") == "plan" and e.get("source") == "plan_patch" for e in out["trace"]["events"])
     validate(out, "agent_run_response")
+
+
+class RepairOnceClient:
+    """Invalid finalize content once, then valid JSON on same-model repair call."""
+
+    def __init__(self):
+        self.act_calls = 0
+        self.repair_calls = 0
+
+    def complete_plan(self, system, user):
+        return {
+            "plan_steps": [{"id": "s1", "title": "Decide", "status": "pending"}],
+            "usage": {},
+            "latency_ms": 1,
+        }
+
+    def complete_tools(self, system, messages, tools):
+        # Same client for act + repair (never switch provider on parse fail).
+        # Repair system prompt is distinct; act may also pass empty tools in unit tests.
+        if "Fix JSON to schema" in system:
+            self.repair_calls += 1
+            return {
+                "content": json.dumps(
+                    {
+                        "items": [
+                            {
+                                "symbol": "AAPL",
+                                "bias": "bull",
+                                "confidence": 0.7,
+                                "thesis": "repaired",
+                                "side": "buy",
+                                "urgency": "normal",
+                                "rationale": "fixed",
+                            }
+                        ],
+                        "warnings": [],
+                    }
+                ),
+                "tool_calls": None,
+                "usage": {},
+                "latency_ms": 1,
+            }
+        self.act_calls += 1
+        return {
+            "content": "this is not valid analyst JSON {{{",
+            "tool_calls": None,
+            "usage": {},
+            "latency_ms": 1,
+        }
+
+    def complete_reflect(self, system, messages):
+        return {
+            "reflect": {"decision": "finalize", "reason": "attempt final"},
+            "usage": {},
+            "latency_ms": 1,
+        }
+
+
+def test_finalize_same_model_repair_once_then_validates():
+    client = RepairOnceClient()
+    req = {
+        "agent": "analyst",
+        "trade_date": "2026-07-28",
+        "watchlist": ["AAPL"],
+        "account_snapshot": {"cash": 100000, "equity": 100000, "positions": [], "open_orders": []},
+        "risk_context": {"execution_mode": "approval_required"},
+        "limits": {"max_tool_rounds": 8},
+    }
+
+    out = run_plan_loop(
+        agent="analyst",
+        req=req,
+        system_plan="plan",
+        system_act="act",
+        system_reflect="reflect",
+        user_message="Analyze AAPL",
+        tools_schema=[],
+        tool_registry={},
+        result_schema="analyst_result",
+        llm_client=client,
+        ctx=RunContext(req=req),
+    )
+
+    assert client.act_calls == 1
+    assert client.repair_calls == 1
+    validate(out["result"], "analyst_result")
+    validate(out, "agent_run_response")
+    assert out["result"]["items"][0]["thesis"] == "repaired"
+    assert out["trace"]["stop_reason"] == "final"
+    assert any(e.get("type") == "llm" and e.get("phase") == "repair" for e in out["trace"]["events"])
