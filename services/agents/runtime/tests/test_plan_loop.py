@@ -111,6 +111,7 @@ def test_run_plan_loop_happy_path_emits_events_and_final_result():
     assert out["trace"]["events"]
     assert out["trace"]["stop_reason"] == "final"
     assert any(e.get("type") == "plan" for e in out["trace"]["events"])
+    assert isinstance(out["trace"].get("router"), dict)
     assert "get_news:True" in (out.get("working_memory") or {}).get("evidence_refs", []) or (
         "get_news:True" in (out["trace"].get("working_memory") or {}).get("evidence_refs", [])
     )

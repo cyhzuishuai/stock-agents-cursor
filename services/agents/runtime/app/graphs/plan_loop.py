@@ -66,6 +66,35 @@ def _append_event(events: list[dict[str, Any]], event_type: str, **payload: Any)
     events.append({"type": event_type, "at": _utcnow_iso(), **payload})
 
 
+def _build_router_snapshot(events: list[dict[str, Any]], trace: dict[str, Any]) -> dict[str, Any]:
+    models: list[str] = []
+    seen_models: set[str] = set()
+    fallback_used_any = False
+
+    for event in events:
+        if event.get("type") != "llm":
+            continue
+        model = str(event.get("model") or "").strip()
+        if model and model not in seen_models:
+            seen_models.add(model)
+            models.append(model)
+        if event.get("fallback_used"):
+            fallback_used_any = True
+
+    for round_entry in trace.get("rounds") or []:
+        llm = round_entry.get("llm")
+        if not isinstance(llm, dict):
+            continue
+        model = str(llm.get("model") or "").strip()
+        if model and model not in seen_models:
+            seen_models.add(model)
+            models.append(model)
+        if llm.get("fallback_used"):
+            fallback_used_any = True
+
+    return {"fallback_used_any": fallback_used_any, "models": models}
+
+
 def _first_pending_id(plan: list[dict[str, Any]]) -> str | None:
     for step in plan:
         if step.get("status") == "pending":
@@ -656,6 +685,9 @@ def run_plan_loop(
 
     finalize_trace(trace, stop_reason)
     trace["usage"] = usage_totals
+    trace["router"] = _build_router_snapshot(events, trace)
+    if handoff:
+        _append_event(events, "handoff", handoff_preview=result_preview(handoff))
     trace["events"] = events
     trace["plan"] = plan
     trace["working_memory"] = memory

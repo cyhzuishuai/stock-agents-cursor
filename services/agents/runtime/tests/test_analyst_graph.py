@@ -35,6 +35,8 @@ def test_analyst_run_returns_result_and_trace(monkeypatch: pytest.MonkeyPatch, a
     assert any(e.get("type") == "plan" for e in (out["trace"].get("events") or []))
     assert "handoff" in out
     assert out["handoff"].get("thesis_by_symbol")
+    assert any(e.get("type") == "handoff" for e in out["trace"].get("events") or [])
+    assert isinstance(out["trace"].get("router"), dict)
     validate(out["result"], "analyst_result")
     validate(out["handoff"], "agent_handoff")
     validate(out, "agent_run_response")
