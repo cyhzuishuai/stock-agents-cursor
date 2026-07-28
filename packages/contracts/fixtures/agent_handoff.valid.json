@@ -1,0 +1,20 @@
+{
+  "thesis_by_symbol": {
+    "AAPL": {
+      "summary": "Strong earnings momentum and resilient services growth support upside.",
+      "bias": "bull",
+      "confidence": 0.72
+    },
+    "MSFT": {
+      "summary": "Cloud growth intact but near-term catalysts are limited.",
+      "bias": "neutral",
+      "confidence": 0.45
+    }
+  },
+  "open_questions": ["Does AAPL guidance imply margin expansion in services?"],
+  "evidence_refs": [
+    "get_daily_bars:AAPL close above 20d SMA",
+    "get_news:AAPL 3 bullish headlines"
+  ],
+  "confidence_notes": "High conviction on AAPL; MSFT held pending clearer catalyst."
+}

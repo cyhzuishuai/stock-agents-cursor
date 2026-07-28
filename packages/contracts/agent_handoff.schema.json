@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent_handoff.schema.json",
+  "type": "object",
+  "properties": {
+    "thesis_by_symbol": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string" },
+          "bias": { "type": "string", "enum": ["bull", "bear", "neutral"] },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "additionalProperties": true
+      }
+    },
+    "open_questions": { "type": "array", "items": { "type": "string" } },
+    "evidence_refs": { "type": "array", "items": { "type": "string" } },
+    "confidence_notes": { "type": "string" }
+  },
+  "additionalProperties": true
+}

@@ -5,6 +5,16 @@
   "required": ["result", "trace"],
   "properties": {
     "result": { "type": "object" },
+    "handoff": { "type": "object" },
+    "working_memory": {
+      "type": "object",
+      "properties": {
+        "notes": { "type": "array", "items": { "type": "string" } },
+        "evidence_refs": { "type": "array", "items": { "type": "string" } },
+        "open_questions": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
     "trace": {
       "type": "object",
       "required": ["agent", "rounds", "stop_reason"],
@@ -29,6 +39,33 @@
             "prompt_tokens": { "type": "integer", "minimum": 0 },
             "completion_tokens": { "type": "integer", "minimum": 0 }
           },
+          "additionalProperties": true
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "plan": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "working_memory": {
+          "type": "object",
+          "properties": {
+            "notes": { "type": "array", "items": { "type": "string" } },
+            "evidence_refs": { "type": "array", "items": { "type": "string" } },
+            "open_questions": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": true
+        },
+        "router": {
+          "type": "object",
           "additionalProperties": true
         }
       },
