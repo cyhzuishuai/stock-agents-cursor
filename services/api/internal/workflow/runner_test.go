@@ -123,7 +123,7 @@ func workflowParams(td string) workflow.RunParams {
 }
 
 func TestRunWorkflowHappyPathAutoExecBuy(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
@@ -212,7 +212,7 @@ func TestRunWorkflowHappyPathAutoExecBuy(t *testing.T) {
 }
 
 func TestRunWorkflowAgentFailureMidChainNoFills(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 		failAt:    workflow.StepPortfolio,
@@ -263,7 +263,7 @@ func TestRunWorkflowAgentFailureMidChainNoFills(t *testing.T) {
 }
 
 func TestRunWorkflowBreachCreatesPendingApprovalNoFill(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000,
 	})
@@ -334,7 +334,7 @@ func TestRunWorkflowBreachCreatesPendingApprovalNoFill(t *testing.T) {
 
 func TestRunWorkflowUnderstatedNotionalStillBreachesMaxOrder(t *testing.T) {
 	// Agent understates notional (100) but qty*broker_mark = 100*191 = 19100 > max 10000.
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 100, -100),
 	})
@@ -393,7 +393,7 @@ func TestRunWorkflowUnderstatedNotionalStillBreachesMaxOrder(t *testing.T) {
 }
 
 func TestRunWorkflowResolvesExecutionModeFromStrategyDB(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000,
 	})
@@ -443,7 +443,7 @@ func TestRunWorkflowResolvesExecutionModeFromStrategyDB(t *testing.T) {
 }
 
 func TestRunWorkflowAutoRejectBreachesRejectsProposalNoApproval(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100), // exceeds max_order_notional 10000,
 	})
@@ -507,7 +507,7 @@ func TestRunWorkflowAutoRejectBreachesRejectsProposalNoApproval(t *testing.T) {
 
 func TestRunWorkflowMidFillFailureSetsTerminalFailed(t *testing.T) {
 	// First symbol auto-fills; second symbol missing mark (no broker price, zero notional).
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst: analystResultJSON(),
 		portfolio: envelopeJSON(`{"proposals":[{"symbol":"AAPL","side":"buy","qty":10,"estimated_notional":1910,"estimated_cash_impact":-1910},{"symbol":"MSFT","side":"buy","qty":5,"estimated_notional":0,"estimated_cash_impact":0}],"warnings":[]}`),
 	})
@@ -560,7 +560,7 @@ func TestRunWorkflowMidFillFailureSetsTerminalFailed(t *testing.T) {
 }
 
 func TestRunWorkflowAllowsSecondRunSameTradeDate(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
@@ -593,7 +593,7 @@ func TestRunWorkflowAllowsSecondRunSameTradeDate(t *testing.T) {
 }
 
 func TestRunWorkflowInvalidPortfolioSchemaNoFills(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: envelopeJSON(`{"warnings":[]}`), // missing proposals,
 	})
@@ -631,7 +631,7 @@ func TestRunWorkflowInvalidPortfolioSchemaNoFills(t *testing.T) {
 }
 
 func TestRunWorkflowNAVFailurePreservesExecutedStatus(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
@@ -675,6 +675,7 @@ func (f *failingNAVLedger) UpsertNAV(ctx context.Context, tradeDate string, mark
 type stubResponses struct {
 	analyst, portfolio string
 	failAt             string
+	lastPortfolioPrior map[string]any // filled when agent=portfolio
 }
 
 type runnerEnv struct {
@@ -683,7 +684,7 @@ type runnerEnv struct {
 	broker *fakeBroker
 }
 
-func setupRunnerEnv(t *testing.T, stubs stubResponses) *runnerEnv {
+func setupRunnerEnv(t *testing.T, stubs *stubResponses) *runnerEnv {
 	t.Helper()
 
 	gormDB, err := db.ConnectSQLite(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name()))
@@ -739,7 +740,7 @@ func setupRunnerEnv(t *testing.T, stubs stubResponses) *runnerEnv {
 	return &runnerEnv{db: gormDB, runner: runner, broker: fb}
 }
 
-func startAgentRuntimeStub(t *testing.T, stubs stubResponses) string {
+func startAgentRuntimeStub(t *testing.T, stubs *stubResponses) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/run" {
@@ -760,6 +761,7 @@ func startAgentRuntimeStub(t *testing.T, stubs stubResponses) string {
 		case workflow.StepAnalyst:
 			body = stubs.analyst
 		case workflow.StepPortfolio:
+			stubs.lastPortfolioPrior = req.PriorStepOutputs
 			body = stubs.portfolio
 		default:
 			http.Error(w, "unknown agent", http.StatusBadRequest)
@@ -789,6 +791,57 @@ func analystResultJSON() string {
 	return envelopeJSON(`{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]}`)
 }
 
+func analystEnvelopeWithHandoffJSON() string {
+	return `{
+	  "result":{"items":[{"symbol":"AAPL","bias":"bull","confidence":0.7,"thesis":"ok","side":"buy","urgency":"normal","rationale":"ok"}],"warnings":[]},
+	  "handoff":{"thesis_by_symbol":{"AAPL":{"summary":"ok","bias":"bull","confidence":0.7}},"evidence_refs":["get_bars:AAPL"],"open_questions":["volume?"]},
+	  "working_memory":{"notes":["n1"],"evidence_refs":["get_bars:AAPL"],"open_questions":["volume?"]},
+	  "trace":{"agent":"analyst","rounds":[],"stop_reason":"final"}
+	}`
+}
+
+func TestRunWorkflowInjectsAnalystHandoffIntoPortfolioPrior(t *testing.T) {
+	stubs := stubResponses{
+		analyst:   analystEnvelopeWithHandoffJSON(),
+		portfolio: portfolioBuyJSON(10, 1910, -1910),
+	}
+	env := setupRunnerEnv(t, &stubs)
+	_, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+	prior := stubs.lastPortfolioPrior
+	if prior == nil {
+		t.Fatal("expected portfolio prior captured")
+	}
+	analyst, ok := prior["analyst"].(map[string]any)
+	if !ok || analyst["items"] == nil {
+		t.Fatalf("analyst must remain result-shaped with items: %#v", prior["analyst"])
+	}
+	if _, ok := prior["analyst_handoff"]; !ok {
+		t.Fatalf("missing analyst_handoff: %#v", prior)
+	}
+	if _, ok := prior["analyst_working_memory"]; !ok {
+		t.Fatalf("missing analyst_working_memory: %#v", prior)
+	}
+}
+
+func TestRunWorkflowWithoutHandoffStillSucceeds(t *testing.T) {
+	stubs := stubResponses{
+		analyst:   analystResultJSON(),
+		portfolio: portfolioBuyJSON(10, 1910, -1910),
+	}
+	env := setupRunnerEnv(t, &stubs)
+	_, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+	prior := stubs.lastPortfolioPrior
+	if _, ok := prior["analyst_handoff"]; ok {
+		t.Fatalf("did not expect analyst_handoff: %#v", prior)
+	}
+}
+
 func portfolioBuyJSON(qty, notional, cashImpact float64) string {
 	return envelopeJSON(fmt.Sprintf(
 		`{"proposals":[{"symbol":"AAPL","side":"buy","qty":%v,"estimated_notional":%v,"estimated_cash_impact":%v}],"warnings":[]}`,
@@ -804,7 +857,7 @@ func portfolioSellJSON(qty, notional, cashImpact float64) string {
 }
 
 func TestRunWorkflowBuyRejectedWhenNotHoldable(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
@@ -841,7 +894,7 @@ func TestRunWorkflowBuyRejectedWhenNotHoldable(t *testing.T) {
 }
 
 func TestRunWorkflowSellAllowedWhenNotHoldable(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioSellJSON(5, 955, 955),
 	})
@@ -882,7 +935,7 @@ func TestRunWorkflowSellAllowedWhenNotHoldable(t *testing.T) {
 
 func TestRunWorkflowBypassRiskSubmitsWithoutRisk(t *testing.T) {
 	// qty*close = 100*191 = 19100 > max_order_notional 10000 — would always breach.
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100),
 	})
@@ -917,7 +970,7 @@ func TestRunWorkflowBypassRiskSubmitsWithoutRisk(t *testing.T) {
 }
 
 func TestRunWorkflowAutoRejectStillRejects(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100),
 	})
@@ -944,7 +997,7 @@ func TestRunWorkflowAutoRejectStillRejects(t *testing.T) {
 }
 
 func TestRunWorkflowRequireApprovalDoesNotSubmit(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(100, 19100, -19100),
 	})
@@ -979,7 +1032,7 @@ func TestRunWorkflowRequireApprovalDoesNotSubmit(t *testing.T) {
 }
 
 func TestRunWorkflowPassSubmitsToBroker(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
@@ -1017,7 +1070,7 @@ func TestRunWorkflowPassSubmitsToBroker(t *testing.T) {
 }
 
 func TestRunWorkflowNilBrokerWithSubmitFailsRun(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})
@@ -1052,7 +1105,7 @@ func TestRunWorkflowNilBrokerWithSubmitFailsRun(t *testing.T) {
 }
 
 func TestRunWorkflowSubmitOrderErrorRejectsAndContinues(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: envelopeJSON(`{"proposals":[{"symbol":"AAPL","side":"buy","qty":5,"estimated_notional":955,"estimated_cash_impact":-955},{"symbol":"AAPL","side":"buy","qty":5,"estimated_notional":955,"estimated_cash_impact":-955}],"warnings":[]}`),
 	})
@@ -1121,7 +1174,7 @@ func TestRunWorkflowSubmitOrderErrorRejectsAndContinues(t *testing.T) {
 }
 
 func TestRunWorkflowPostSubmitGetOrderErrorKeepsSubmitted(t *testing.T) {
-	env := setupRunnerEnv(t, stubResponses{
+	env := setupRunnerEnv(t, &stubResponses{
 		analyst:  analystResultJSON(),
 		portfolio: portfolioBuyJSON(10, 1910, -1910),
 	})

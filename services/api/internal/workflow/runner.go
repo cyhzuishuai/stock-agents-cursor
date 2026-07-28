@@ -60,8 +60,10 @@ type agentRunRequest struct {
 }
 
 type agentEnvelope struct {
-	Result json.RawMessage `json:"result"`
-	Trace  json.RawMessage `json:"trace"`
+	Result        json.RawMessage `json:"result"`
+	Trace         json.RawMessage `json:"trace"`
+	Handoff       json.RawMessage `json:"handoff"`
+	WorkingMemory json.RawMessage `json:"working_memory"`
 }
 
 type portfolioProposal struct {
@@ -272,6 +274,22 @@ func (r *Runner) runWorkflowThroughFills(ctx context.Context, run *models.Workfl
 		}
 		// Forward only the result object to the next agent.
 		prior[step.Name] = resultObj
+		if step.Name == StepAnalyst {
+			if len(envelope.Handoff) > 0 && string(envelope.Handoff) != "null" {
+				var handoff any
+				if err := json.Unmarshal(envelope.Handoff, &handoff); err != nil {
+					return nil, false, fmt.Errorf("decode analyst handoff: %w", err)
+				}
+				prior["analyst_handoff"] = handoff
+			}
+			if len(envelope.WorkingMemory) > 0 && string(envelope.WorkingMemory) != "null" {
+				var mem any
+				if err := json.Unmarshal(envelope.WorkingMemory, &mem); err != nil {
+					return nil, false, fmt.Errorf("decode analyst working_memory: %w", err)
+				}
+				prior["analyst_working_memory"] = mem
+			}
+		}
 	}
 
 	portRaw, err := json.Marshal(prior[StepPortfolio])
