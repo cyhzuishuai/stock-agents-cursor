@@ -24,6 +24,8 @@ from typing import Any
 
 import httpx
 
+from stock_agents_common.model_router import ProviderConfig, chat_completions
+
 _THINK_TAG_RE = re.compile(
     r"<(think|thinking|reason|reasoning)\b[^>]*>.*?</\1>",
     re.IGNORECASE | re.DOTALL,
@@ -295,41 +297,16 @@ class ToolLLMClient:
         messages: list[dict[str, Any]],
         tools_openai_schema: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        api_key = os.environ.get("LLM_API_KEY", "").strip()
-        if not api_key:
-            raise ValueError("LLM_API_KEY is required when LLM_MODE is not mock")
-
-        base_url = (os.environ.get("LLM_BASE_URL") or "https://api.openai.com/v1").strip().rstrip("/")
-        model = (os.environ.get("LLM_MODEL") or "gpt-4o-mini").strip() or "gpt-4o-mini"
-
         # Deep-copy so normalizing for the wire format does not mutate loop state.
         chat_messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
             *[copy.deepcopy(m) for m in messages],
         ]
         payload: dict[str, Any] = {
-            "model": model,
             "messages": chat_messages,
         }
-
-        is_minimax = "minimax" in base_url.lower()
         if tools_openai_schema:
             payload["tools"] = tools_openai_schema
-        elif not is_minimax:
-            # Finalize round: ask for a JSON object when no tools are offered.
-            # MiniMax often ignores/quirks on response_format; rely on prompt + extract_json.
-            payload["response_format"] = {"type": "json_object"}
-
-        # MiniMax OpenAI-compatible extras (thinking / reasoning_split).
-        if is_minimax:
-            thinking_mode = (os.environ.get("LLM_THINKING") or "disabled").strip().lower()
-            if thinking_mode == "adaptive":
-                payload["thinking"] = {"type": "adaptive"}
-            else:
-                payload["thinking"] = {"type": "disabled"}
-            reasoning_split = (os.environ.get("LLM_REASONING_SPLIT") or "").strip().lower()
-            if reasoning_split in {"true", "1", "yes"}:
-                payload["reasoning_split"] = True
 
         # Normalize message content and tool_calls for OpenAI-compatible providers.
         for msg in chat_messages:
@@ -358,29 +335,49 @@ class ToolLLMClient:
                     )
                 msg["tool_calls"] = normalized_calls
 
+        def prepare(provider: ProviderConfig, base_payload: dict[str, Any]) -> dict[str, Any]:
+            p = copy.deepcopy(base_payload)
+            if "minimax" in provider.base_url.lower():
+                thinking_mode = (os.environ.get("LLM_THINKING") or "disabled").strip().lower()
+                if thinking_mode == "adaptive":
+                    p["thinking"] = {"type": "adaptive"}
+                else:
+                    p["thinking"] = {"type": "disabled"}
+                reasoning_split = (os.environ.get("LLM_REASONING_SPLIT") or "").strip().lower()
+                if reasoning_split in {"true", "1", "yes"}:
+                    p["reasoning_split"] = True
+            elif not p.get("tools"):
+                # Finalize round: ask for a JSON object when no tools are offered.
+                # MiniMax often ignores/quirks on response_format; rely on prompt + extract_json.
+                p["response_format"] = {"type": "json_object"}
+            return p
+
         started = time.perf_counter()
         try:
-            if self._http_client is not None:
-                response = self._http_client.post(
-                    f"{base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json=payload,
-                )
-            else:
-                with httpx.Client(timeout=180.0) as client:
-                    response = client.post(
-                        f"{base_url}/chat/completions",
-                        headers={"Authorization": f"Bearer {api_key}"},
-                        json=payload,
-                    )
+            router = chat_completions(
+                payload=payload,
+                http_client=self._http_client,
+                timeout=180.0,
+                prepare_payload=prepare,
+            )
+        except ValueError:
+            raise
         except httpx.HTTPError as exc:
             raise ValueError(f"LLM request failed: {exc}") from exc
         latency_ms = int((time.perf_counter() - started) * 1000)
 
+        response = router.response
         if response.status_code >= 400:
             detail = (response.text or "")[:800]
             raise ValueError(f"LLM HTTP {response.status_code}: {detail}")
         body = response.json()
         message = body["choices"][0]["message"]
         usage = body.get("usage") or {}
-        return _parse_openai_message(message, usage, latency_ms)
+        parsed = _parse_openai_message(message, usage, latency_ms)
+        parsed["router"] = {
+            "provider": router.provider,
+            "model": router.model,
+            "fallback_used": router.fallback_used,
+            "primary_error": router.primary_error,
+        }
+        return parsed

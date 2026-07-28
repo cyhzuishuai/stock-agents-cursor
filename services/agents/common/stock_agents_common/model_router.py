@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
@@ -102,13 +103,20 @@ def chat_completions(
     payload: dict,
     http_client: httpx.Client | None = None,
     timeout: float = 180.0,
+    prepare_payload: Callable[[ProviderConfig, dict], dict] | None = None,
 ) -> RouterResult:
     primary, fallback = resolve_providers()
+
+    def _payload_for(provider: ProviderConfig) -> dict:
+        if prepare_payload is not None:
+            return prepare_payload(provider, payload)
+        return payload
+
     primary_error: str | None = None
     response: httpx.Response | None = None
     exc: BaseException | None = None
     try:
-        response = _post(primary, payload, http_client=http_client, timeout=timeout)
+        response = _post(primary, _payload_for(primary), http_client=http_client, timeout=timeout)
     except httpx.HTTPError as e:
         exc = e
     err = _is_http_failure(exc, response)
@@ -124,7 +132,9 @@ def chat_completions(
     if fallback is None:
         raise ValueError(primary_error) from exc
     try:
-        fb_response = _post(fallback, payload, http_client=http_client, timeout=timeout)
+        fb_response = _post(
+            fallback, _payload_for(fallback), http_client=http_client, timeout=timeout
+        )
     except httpx.HTTPError as e:
         raise ValueError(f"primary failed ({primary_error}); fallback failed: {e}") from e
     fb_err = _is_http_failure(None, fb_response)

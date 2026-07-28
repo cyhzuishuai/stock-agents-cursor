@@ -227,6 +227,46 @@ def test_real_mode_requires_api_key(monkeypatch):
         client.complete_tools("sys", [{"role": "user", "content": "x"}], [])
 
 
+def test_live_tool_client_falls_back_on_primary_http_error(monkeypatch):
+    monkeypatch.setenv("LLM_MODE", "live")
+    monkeypatch.setenv("LLM_PRIMARY_API_KEY", "ark-key")
+    monkeypatch.setenv("LLM_PRIMARY_BASE_URL", "https://ark.example/api/v3")
+    monkeypatch.setenv("LLM_PRIMARY_MODEL", "Doubao-Smart-Router")
+    monkeypatch.setenv("LLM_FALLBACK_API_KEY", "mm-key")
+    monkeypatch.setenv("LLM_FALLBACK_BASE_URL", "https://mm.example/v1")
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "MiniMax-M3")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "ark.example" in str(request.url):
+            return httpx.Response(500, text="down")
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "1",
+                                    "type": "function",
+                                    "function": {"name": "get_news", "arguments": "{\"symbol\":\"AAPL\"}"},
+                                }
+                            ],
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    client = ToolLLMClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    out = client.complete_tools("sys", [{"role": "user", "content": "hi"}], [])
+    assert out["router"]["fallback_used"] is True
+    assert out["router"]["model"] == "MiniMax-M3"
+    assert out["tool_calls"]
+
+
 def test_extract_json_strips_think_tags_and_markdown_fence():
     payload = {
         "items": [
