@@ -50,7 +50,9 @@
 
 Go 注入 Alpaca 账户快照（现金 / 权益 / 持仓 / 未成交订单）与 `risk_context`，依次调用 **agent-runtime** 两次（`agent=analyst` → `agent=portfolio`）。每步返回 `{result, trace}`；Go 持久化完整 envelope，并将 `result` 传给下一步。Runs 详情可展开工具时间线（`trace.rounds`）。
 
-Analyst 与 Portfolio 均走 **plan → act → reflect → finalize** 控制流：模型先产出分步计划（plan），按步调用工具（act），每步结束后反思（reflect）以决定继续、改计划或进入 finalize 输出结构化 JSON。trace 除 `rounds` 外还含 `plan`、`events[]` 与 `working_memory` 快照；Analyst envelope 可附带 `handoff` 供下游 Portfolio 使用（Go 注入尚未落地）。JSON 解析失败时在同一 provider 上 repair 重试，不切换 ModelRouter。
+- 同一 run 内，Go 将 Analyst 的 `handoff` / `working_memory` 以 `prior_step_outputs.analyst_handoff` 与 `analyst_working_memory` 注入 Portfolio；`analyst` 仍为 result（含 `items`）。缺手交信息不导致失败。
+
+Analyst 与 Portfolio 均走 **plan → act → reflect → finalize** 控制流：模型先产出分步计划（plan），按步调用工具（act），每步结束后反思（reflect）以决定继续、改计划或进入 finalize 输出结构化 JSON。trace 除 `rounds` 外还含 `plan`、`events[]` 与 `working_memory` 快照；Analyst envelope 可附带 `handoff` 供下游 Portfolio 使用。JSON 解析失败时在同一 provider 上 repair 重试，不切换 ModelRouter。
 
 agent-runtime 通过 `LLM_MODE=mock|live` 切换 mock 与实模型；live 时由 ModelRouter 路由：主 provider（`LLM_PRIMARY_*`，默认 Volcengine Ark）失败一次后切至备用（`LLM_FALLBACK_*`，需显式设置 MiniMax `BASE_URL`）。Analyst 工具含日线行情、**Finnhub** 新闻、**Tavily** 网页搜索（缺 key 时优雅降级）、账户视图与风控上下文；Portfolio 工具含账户、风控、收盘价与 `size_proposals`。
 
