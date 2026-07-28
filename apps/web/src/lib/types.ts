@@ -107,6 +107,21 @@ export interface AgentTraceRound {
   tools?: AgentToolResult[];
 }
 
+export type AgentTraceEventType =
+  | "plan"
+  | "step_start"
+  | "llm"
+  | "tool"
+  | "reflect"
+  | "handoff"
+  | "finalize";
+
+export interface AgentTraceEvent {
+  type: AgentTraceEventType | string;
+  at?: string;
+  [key: string]: unknown;
+}
+
 export interface AgentTrace {
   agent: "analyst" | "portfolio";
   started_at?: string;
@@ -114,6 +129,11 @@ export interface AgentTrace {
   rounds: AgentTraceRound[];
   stop_reason?: AgentStopReason;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
+  events?: AgentTraceEvent[];
+  plan?: unknown;
+  working_memory?: unknown;
+  router?: { fallback_used_any?: boolean; [key: string]: unknown };
+  langsmith_run_url?: string;
 }
 
 export interface AnalystResultItem {
@@ -147,6 +167,8 @@ export interface PortfolioResult {
 export interface AgentRunEnvelope {
   result: AnalystResult | PortfolioResult | Record<string, unknown>;
   trace: AgentTrace;
+  handoff?: Record<string, unknown>;
+  working_memory?: Record<string, unknown>;
 }
 
 export interface TradeProposal {

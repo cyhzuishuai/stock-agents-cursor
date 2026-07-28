@@ -753,6 +753,85 @@ textarea:focus-visible {
   border-radius: 4px;
 }
 
+.runs__agent-timeline {
+  margin-top: 0.25rem;
+}
+
+.runs__agent-timeline-item {
+  align-items: baseline;
+  gap: 0.625rem 0.875rem;
+}
+
+.runs__event-type {
+  display: inline-block;
+  min-width: 5.5rem;
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ledger);
+  border: 1px solid color-mix(in srgb, var(--ledger) 35%, var(--rule));
+  background: color-mix(in srgb, var(--ledger) 8%, var(--surface));
+  padding: 0.125rem 0.4rem;
+  border-radius: 2px;
+}
+
+.runs__event-at {
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.runs__event-summary {
+  flex: 1 1 12rem;
+  color: var(--ink);
+  font-size: 0.875rem;
+}
+
+.runs__handoff {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--rule);
+}
+
+.runs__handoff-meta {
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+.runs__handoff-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.runs__handoff-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  font-family: var(--font-data), ui-monospace, monospace;
+}
+
+.runs__handoff-list {
+  list-style: disc;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--ink);
+}
+
+.runs__handoff-notes {
+  color: var(--ink);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
 .settings {
   display: flex;
   flex-direction: column;
