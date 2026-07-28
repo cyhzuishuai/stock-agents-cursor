@@ -29,8 +29,9 @@ cp deploy/env.example deploy/.env
 |------|------|
 | `JWT_SECRET` | 登录 JWT 密钥（务必改掉默认值） |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 单用户管理员账号 |
-| `LLM_MODE` | `mock`（本地/CI 默认）或 `live`（实模型；示例 `LLM_MODEL=MiniMax-M3`） |
-| `LLM_API_KEY` / `LLM_BASE_URL` | live 时填写；mock 可省略 |
+| `LLM_MODE` | `mock`（本地/CI 默认）或 `live`（实模型） |
+| `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | 兼容旧配置：未设 `LLM_PRIMARY_*` 时作为单一 provider（无 failover） |
+| `LLM_PRIMARY_*` / `LLM_FALLBACK_*` | live 时推荐：主路由（Volcengine Ark）+ 备用（MiniMax）；见下方示例 |
 | `AGENT_RUNTIME_URL` | Go → agent-runtime（Compose 内默认 `http://agent-runtime:8001`） |
 | `FINNHUB_API_KEY` | 可选；新闻工具缺 key 时优雅降级 |
 | `WEB_SEARCH_ENABLED` | 默认 `true` |
@@ -45,6 +46,22 @@ cp deploy/env.example deploy/.env
 | `INTERNAL_RUN_TOKEN` | 内部/脚本触发工作流（`POST /internal/runs/trigger`，请求头 `X-Internal-Token`） |
 
 `deploy/env.example` 是可入库模板；`deploy/.env` 已被根目录 `.gitignore` 忽略，勿提交。
+
+**Live 模型路由（`LLM_MODE=live`）示例** — 在 `deploy/.env` 填入占位符（勿提交真实密钥）：
+
+```text
+# Primary: Volcengine Ark Doubao-Smart-Router (or ep-xxxxxxxx)
+LLM_PRIMARY_API_KEY=
+LLM_PRIMARY_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+LLM_PRIMARY_MODEL=Doubao-Smart-Router
+
+# Fallback: MiniMax（务必显式设置 BASE_URL；未设时代码默认 https://api.openai.com/v1）
+LLM_FALLBACK_API_KEY=
+LLM_FALLBACK_BASE_URL=https://api.minimaxi.com/v1
+LLM_FALLBACK_MODEL=MiniMax-M3
+```
+
+若仅配置 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`（不设 `LLM_PRIMARY_*`），行为与旧版相同：单 provider、无 failover。
 
 本地非 Docker 跑 API 时，也可把同样变量导出到 shell，或仍用 `deploy/.env` 作参考。
 

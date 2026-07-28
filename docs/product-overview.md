@@ -50,7 +50,7 @@
 
 Go 注入 Alpaca 账户快照（现金 / 权益 / 持仓 / 未成交订单）与 `risk_context`，依次调用 **agent-runtime** 两次（`agent=analyst` → `agent=portfolio`）。每步返回 `{result, trace}`；Go 持久化完整 envelope，并将 `result` 传给下一步。Runs 详情可展开工具时间线（`trace.rounds`）。
 
-agent-runtime 通过 `LLM_MODE=mock|live` 切换 mock 与实模型；live 时默认 OpenAI 兼容 API（生产示例：`MiniMax-M3`）。Analyst 工具含日线行情、**Finnhub** 新闻、**Tavily** 网页搜索（缺 key 时优雅降级）、账户视图与风控上下文；Portfolio 工具含账户、风控、收盘价与 `size_proposals`。
+agent-runtime 通过 `LLM_MODE=mock|live` 切换 mock 与实模型；live 时由 ModelRouter 路由：主 provider（`LLM_PRIMARY_*`，默认 Volcengine Ark）失败一次后切至备用（`LLM_FALLBACK_*`，需显式设置 MiniMax `BASE_URL`）。Analyst 工具含日线行情、**Finnhub** 新闻、**Tavily** 网页搜索（缺 key 时优雅降级）、账户视图与风控上下文；Portfolio 工具含账户、风控、收盘价与 `size_proposals`。
 
 | 步骤 | Graph | 产出要点 |
 |------|--------|----------|
