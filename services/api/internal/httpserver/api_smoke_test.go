@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/cyh/stock-agents/services/api/internal/approvals"
 	"github.com/cyh/stock-agents/services/api/internal/auth"
@@ -536,6 +537,15 @@ func TestRunsDetailAndTriggerAndCancel(t *testing.T) {
 		if _, ok := step0["payload_json"]; !ok {
 			t.Fatalf("missing payload_json on step: %v", step0)
 		}
+		ca, _ := resp["created_at"].(string)
+		if ca == "" {
+			t.Fatal("created_at empty")
+		}
+		if _, err := time.Parse(time.RFC3339, ca); err != nil {
+			if _, err2 := time.Parse(time.RFC3339Nano, ca); err2 != nil {
+				t.Fatalf("created_at not RFC3339: %q err=%v", ca, err)
+			}
+		}
 	})
 
 	t.Run("runs list enriched", func(t *testing.T) {
@@ -560,6 +570,21 @@ func TestRunsDetailAndTriggerAndCancel(t *testing.T) {
 		}
 		if resp[0]["strategy_name"] != "Test Strategy" {
 			t.Fatalf("strategy_name: got %v want Test Strategy", resp[0]["strategy_name"])
+		}
+		var listCA string
+		for _, item := range resp {
+			if uint(item["id"].(float64)) == run.ID {
+				listCA, _ = item["created_at"].(string)
+				break
+			}
+		}
+		if listCA == "" {
+			t.Fatal("created_at empty in list")
+		}
+		if _, err := time.Parse(time.RFC3339, listCA); err != nil {
+			if _, err2 := time.Parse(time.RFC3339Nano, listCA); err2 != nil {
+				t.Fatalf("created_at not RFC3339 in list: %q err=%v", listCA, err)
+			}
 		}
 	})
 

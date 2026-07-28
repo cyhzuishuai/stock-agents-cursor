@@ -16,8 +16,8 @@ GET /api/v1/overview -> {
 GET /api/v1/portfolio -> { cash, positions: [{ symbol, qty, avg_cost, stop_loss, take_profit, market_price, unrealized_pnl, weight }] }
 
 ## Runs
-GET /api/v1/runs -> [{ id, trade_date, status, created_at }]
-GET /api/v1/runs/:id -> { id, trade_date, status, steps: [...], proposals: [...], orders: [...] }
+GET /api/v1/runs -> [{ id, trade_date, status, created_at, strategy_id, strategy_name, trigger }]
+GET /api/v1/runs/:id -> { id, trade_date, status, created_at, strategy_id, strategy_name, trigger, steps: [...], proposals: [...], orders: [...] }
 POST /api/v1/runs/trigger { "trade_date"?: "YYYY-MM-DD" } -> { run_id }
 POST /api/v1/runs/:id/cancel -> { ok: true }
 

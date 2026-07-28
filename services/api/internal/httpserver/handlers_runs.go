@@ -23,6 +23,13 @@ func (h *API) lookupStrategyName(c *gin.Context, strategyID *uint) string {
 	return st.Name
 }
 
+func formatCreatedAt(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 func (h *API) ListRuns(c *gin.Context) {
 	var runs []models.WorkflowRun
 	if err := h.DB.WithContext(c.Request.Context()).Order("id DESC").Find(&runs).Error; err != nil {
@@ -38,7 +45,7 @@ func (h *API) ListRuns(c *gin.Context) {
 			"strategy_id":   r.StrategyID,
 			"strategy_name": h.lookupStrategyName(c, r.StrategyID),
 			"trigger":       r.Trigger,
-			"created_at":    createdAtPlaceholder(r.ID),
+			"created_at":    formatCreatedAt(r.CreatedAt),
 		})
 	}
 	c.JSON(http.StatusOK, out)
@@ -84,6 +91,7 @@ func (h *API) GetRun(c *gin.Context) {
 		"strategy_id":   run.StrategyID,
 		"strategy_name": h.lookupStrategyName(c, run.StrategyID),
 		"trigger":       run.Trigger,
+		"created_at":    formatCreatedAt(run.CreatedAt),
 		"steps":         steps,
 		"proposals":     proposals,
 		"orders":        orders,
