@@ -1,0 +1,116 @@
+"""Unit tests for plan → act → reflect LangGraph loop."""
+
+from __future__ import annotations
+
+import json
+
+from stock_agents_common.schemas import validate
+from stock_agents_common.tools import RunContext
+
+from app.graphs.loop import openai_tool_schema
+from app.graphs.plan_loop import run_plan_loop
+
+
+class FakeClient:
+    def __init__(self):
+        self.n = 0
+
+    def complete_plan(self, system, user):
+        return {
+            "plan_steps": [{"id": "s1", "title": "News", "status": "pending"}],
+            "usage": {},
+            "latency_ms": 1,
+        }
+
+    def complete_tools(self, system, messages, tools):
+        self.n += 1
+        if self.n == 1:
+            return {
+                "content": None,
+                "tool_calls": [{"id": "1", "name": "get_news", "args": {"symbol": "AAPL"}}],
+                "usage": {},
+                "latency_ms": 1,
+            }
+        return {
+            "content": json.dumps(
+                {
+                    "items": [
+                        {
+                            "symbol": "AAPL",
+                            "bias": "bull",
+                            "confidence": 0.7,
+                            "thesis": "t",
+                            "side": "buy",
+                            "urgency": "normal",
+                            "rationale": "r",
+                        }
+                    ],
+                    "warnings": [],
+                }
+            ),
+            "tool_calls": None,
+            "usage": {},
+            "latency_ms": 1,
+        }
+
+    def complete_reflect(self, system, messages):
+        if self.n == 1:
+            return {
+                "reflect": {"decision": "mark_step_done", "step_id": "s1", "reason": "got news"},
+                "usage": {},
+                "latency_ms": 1,
+            }
+        return {
+            "reflect": {"decision": "finalize", "reason": "done"},
+            "usage": {},
+            "latency_ms": 1,
+        }
+
+
+def _get_news(ctx, *, symbol: str, from_date=None, to_date=None):
+    return {"ok": True, "data": {"headlines": []}}
+
+
+def test_run_plan_loop_happy_path_emits_events_and_final_result():
+    client = FakeClient()
+    req = {
+        "agent": "analyst",
+        "trade_date": "2026-07-28",
+        "watchlist": ["AAPL"],
+        "account_snapshot": {"cash": 100000, "equity": 100000, "positions": [], "open_orders": []},
+        "risk_context": {"execution_mode": "approval_required"},
+        "limits": {"max_tool_rounds": 8},
+    }
+
+    out = run_plan_loop(
+        agent="analyst",
+        req=req,
+        system_plan="plan",
+        system_act="act",
+        system_reflect="reflect",
+        user_message="Analyze AAPL",
+        tools_schema=[
+            openai_tool_schema(
+                "get_news",
+                "Fetch news",
+                {
+                    "type": "object",
+                    "required": ["symbol"],
+                    "properties": {"symbol": {"type": "string"}},
+                },
+            )
+        ],
+        tool_registry={"get_news": _get_news},
+        result_schema="analyst_result",
+        llm_client=client,
+        ctx=RunContext(req=req),
+    )
+
+    validate(out["result"], "analyst_result")
+    validate(out, "agent_run_response")
+    assert out["trace"]["events"]
+    assert out["trace"]["stop_reason"] == "final"
+    assert any(e.get("type") == "plan" for e in out["trace"]["events"])
+    assert "get_news:True" in (out.get("working_memory") or {}).get("evidence_refs", []) or (
+        "get_news:True" in (out["trace"].get("working_memory") or {}).get("evidence_refs", [])
+    )
