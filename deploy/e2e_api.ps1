@@ -96,8 +96,11 @@ try {
     Assert-True ($null -ne $strategies) "GET /strategies returns list"
 
     # Default: US/Eastern calendar date today (same as API defaultTradeDate).
-    # Override with EOD_TRADE_DATE if needed. Same trade_date may be re-run (busy lock only).
-    $tradeDate = if ($env:EOD_TRADE_DATE) {
+    # Override with RUN_TRADE_DATE if needed. Same trade_date may be re-run (busy lock only).
+    $tradeDate = if ($env:RUN_TRADE_DATE) {
+        $env:RUN_TRADE_DATE
+    } elseif ($env:EOD_TRADE_DATE) {
+        # legacy alias
         $env:EOD_TRADE_DATE
     } else {
         [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId(

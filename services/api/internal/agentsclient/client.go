@@ -52,8 +52,8 @@ func (c *Client) Call(ctx context.Context, baseURL string, body any, timeout tim
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := httpClient.Do(req)
-		cancel()
 		if err != nil {
+			cancel()
 			if shouldRetryError(err) && attempt < maxRetries {
 				lastErr = err
 				continue
@@ -61,8 +61,11 @@ func (c *Client) Call(ctx context.Context, baseURL string, body any, timeout tim
 			return nil, err
 		}
 
+		// Keep reqCtx alive until the body is fully read; cancel() right after Do
+		// aborts large agent envelopes (result+trace) with "context canceled".
 		raw, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		cancel()
 		if err != nil {
 			return nil, fmt.Errorf("read response: %w", err)
 		}

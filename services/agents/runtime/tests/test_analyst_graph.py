@@ -69,6 +69,54 @@ def test_analyst_aligns_missing_symbols_to_hold(monkeypatch: pytest.MonkeyPatch,
     validate(out["result"], "analyst_result")
 
 
+def test_align_analyst_coerces_string_evidence_and_warnings():
+    from app.graphs.analyst import align_analyst_result
+
+    raw = {
+        "items": [
+            {
+                "symbol": "AAPL",
+                "bias": "neutral",
+                "confidence": "0.4",
+                "thesis": "Range-bound",
+                "side": "hold",
+                "urgency": "low",
+                "rationale": "Thin volume",
+                "evidence": "20-day close range 29.79-30.47. No news.",
+            }
+        ],
+        "warnings": "sparse volume prints",
+    }
+    aligned = align_analyst_result(raw, {"watchlist": ["AAPL"]})
+    validate(aligned, "analyst_result")
+    assert aligned["items"][0]["evidence"] == ["20-day close range 29.79-30.47. No news."]
+    assert aligned["items"][0]["confidence"] == 0.4
+    assert aligned["warnings"] == ["sparse volume prints"]
+
+
+def test_align_analyst_normalizes_bias_side_aliases():
+    from app.graphs.analyst import align_analyst_result
+
+    raw = {
+        "items": [
+            {
+                "symbol": "AAPL",
+                "bias": "bearish",
+                "confidence": 0.6,
+                "thesis": "Downtrend",
+                "side": "short",
+                "urgency": "medium",
+                "rationale": "Lower highs",
+            }
+        ]
+    }
+    aligned = align_analyst_result(raw, {"watchlist": ["AAPL"]})
+    validate(aligned, "analyst_result")
+    assert aligned["items"][0]["bias"] == "bear"
+    assert aligned["items"][0]["side"] == "sell"
+    assert aligned["items"][0]["urgency"] == "normal"
+
+
 def test_analyst_accepts_think_wrapped_markdown_json(
     monkeypatch: pytest.MonkeyPatch, agent_run_request, tmp_path
 ):

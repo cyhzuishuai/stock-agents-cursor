@@ -75,7 +75,13 @@ def align_portfolio_result(result: dict[str, Any], req: dict[str, Any]) -> dict[
     """Drop holds / invalid sides; keep schema-valid proposals only."""
     _ = req
     proposals: list[dict[str, Any]] = []
-    warnings: list[str] = list(result.get("warnings") or [])
+    raw_warnings = result.get("warnings")
+    if isinstance(raw_warnings, str):
+        warnings: list[str] = [raw_warnings] if raw_warnings.strip() else []
+    elif isinstance(raw_warnings, list):
+        warnings = [str(w) for w in raw_warnings if w is not None]
+    else:
+        warnings = []
     for prop in result.get("proposals") or []:
         if not isinstance(prop, dict):
             continue

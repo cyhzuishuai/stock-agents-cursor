@@ -19,7 +19,14 @@ from app.graphs.loop import openai_tool_schema, run_tool_loop, web_search_enable
 SYSTEM_PROMPT = """You are an equity analyst agent with tools.
 Gather evidence via tools (daily bars, news, web search, account/risk views), then return JSON:
 {"items":[{"symbol","bias","confidence","thesis","side","urgency","rationale","evidence"?}], "warnings"?}
-Cover every watchlist symbol. Weak evidence → hold + neutral + low confidence. Never invent conviction."""
+Rules:
+- Cover every watchlist symbol.
+- bias MUST be one of: bull|bear|neutral (not bullish/bearish).
+- side MUST be one of: buy|sell|hold.
+- urgency MUST be one of: low|normal|high.
+- evidence MUST be an array of short strings (not one paragraph).
+- warnings MUST be an array of strings (or omit).
+- Weak evidence → hold + neutral + low confidence. Never invent conviction."""
 
 
 def _tool_schemas() -> list[dict[str, Any]]:
@@ -89,14 +96,98 @@ def _tool_registry() -> dict[str, Any]:
     return registry
 
 
+def _as_str_list(value: Any) -> list[str]:
+    """Coerce LLM quirks: string → [string]; list → str items; else []."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            if isinstance(item, str):
+                if item.strip():
+                    out.append(item)
+            else:
+                out.append(str(item))
+        return out
+    return [str(value)]
+
+
+_BIAS_ALIASES = {
+    "bull": "bull",
+    "bullish": "bull",
+    "long": "bull",
+    "positive": "bull",
+    "bear": "bear",
+    "bearish": "bear",
+    "short": "bear",
+    "negative": "bear",
+    "neutral": "neutral",
+    "flat": "neutral",
+    "mixed": "neutral",
+    "none": "neutral",
+}
+_SIDE_ALIASES = {
+    "buy": "buy",
+    "long": "buy",
+    "sell": "sell",
+    "short": "sell",
+    "hold": "hold",
+    "neutral": "hold",
+    "none": "hold",
+    "wait": "hold",
+}
+_URGENCY_ALIASES = {
+    "low": "low",
+    "normal": "normal",
+    "medium": "normal",
+    "med": "normal",
+    "high": "high",
+}
+
+
+def _norm_enum(value: Any, aliases: dict[str, str], default: str) -> str:
+    if value is None:
+        return default
+    key = str(value).strip().lower()
+    return aliases.get(key, default)
+
+
+def _coerce_analyst_item(item: dict[str, Any]) -> dict[str, Any]:
+    allowed = ("symbol", "bias", "confidence", "thesis", "side", "urgency", "rationale", "evidence")
+    cleaned = {k: item[k] for k in allowed if k in item}
+    if "evidence" in cleaned:
+        evidence = _as_str_list(cleaned.get("evidence"))
+        if evidence:
+            cleaned["evidence"] = evidence
+        else:
+            cleaned.pop("evidence", None)
+    # Common live-LLM slips
+    if isinstance(cleaned.get("confidence"), str):
+        try:
+            cleaned["confidence"] = float(cleaned["confidence"])
+        except ValueError:
+            cleaned["confidence"] = 0.3
+    cleaned["bias"] = _norm_enum(cleaned.get("bias"), _BIAS_ALIASES, "neutral")
+    cleaned["side"] = _norm_enum(cleaned.get("side"), _SIDE_ALIASES, "hold")
+    cleaned["urgency"] = _norm_enum(cleaned.get("urgency"), _URGENCY_ALIASES, "normal")
+    return cleaned
+
+
 def align_analyst_result(result: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
     """Ensure one item per watchlist symbol; default hold/neutral for gaps."""
     watchlist: list[str] = list(req.get("watchlist") or [])
     items_by_symbol = {
-        item["symbol"]: item for item in (result.get("items") or []) if isinstance(item, dict) and "symbol" in item
+        item["symbol"]: _coerce_analyst_item(item)
+        for item in (result.get("items") or [])
+        if isinstance(item, dict) and "symbol" in item
     }
     items: list[dict[str, Any]] = []
-    warnings: list[str] = list(result.get("warnings") or [])
+    warnings: list[str] = _as_str_list(result.get("warnings"))
 
     for symbol in watchlist:
         if symbol in items_by_symbol:

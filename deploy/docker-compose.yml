@@ -41,6 +41,7 @@ services:
       LLM_MODE: ${LLM_MODE:-mock}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
       MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-alpaca}
       ALPACA_API_KEY: ${ALPACA_API_KEY:-}
       ALPACA_API_SECRET: ${ALPACA_API_SECRET:-}
@@ -51,6 +52,7 @@ services:
       WEB_SEARCH_API_KEY: ${WEB_SEARCH_API_KEY:-}
       MAX_TOOL_ROUNDS_ANALYST: ${MAX_TOOL_ROUNDS_ANALYST:-8}
       MAX_TOOL_ROUNDS_PORTFOLIO: ${MAX_TOOL_ROUNDS_PORTFOLIO:-3}
+      WATCHLIST: ${WATCHLIST:-}
     restart: unless-stopped
 
   api:
@@ -64,6 +66,7 @@ services:
       DATABASE_URL: postgres://stock:stock@postgres:5432/stock?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       AGENT_RUNTIME_URL: http://agent-runtime:8001
+      WATCHLIST: ${WATCHLIST:-}
     depends_on:
       postgres:
         condition: service_healthy

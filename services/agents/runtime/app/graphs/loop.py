@@ -216,9 +216,10 @@ def run_tool_loop(
         )
 
         if tool_calls:
+            # MiniMax multi-turn: keep full assistant message; never send content=null.
             assistant_msg: dict[str, Any] = {
                 "role": "assistant",
-                "content": content,
+                "content": content if content is not None else "",
                 "tool_calls": tool_calls,
             }
             return {

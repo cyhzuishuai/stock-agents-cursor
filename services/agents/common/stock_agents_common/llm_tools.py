@@ -14,6 +14,7 @@ Script resolution order:
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -164,6 +165,49 @@ def _round_to_response(round_data: dict[str, Any], *, latency_ms: int) -> dict[s
     }
 
 
+def _coerce_pseudo_tool_calls(content: Any) -> list[dict[str, Any]] | None:
+    """MiniMax sometimes emits tool calls as JSON in content instead of tool_calls."""
+    parsed = extract_json_from_content(content if isinstance(content, str) else None)
+    if not isinstance(parsed, dict):
+        return None
+    # Single call: {"name": "...", "arguments": {...}} or {"name","args"}
+    if "name" in parsed and ("arguments" in parsed or "args" in parsed):
+        args = parsed.get("args")
+        if args is None:
+            arguments = parsed.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    args = json.loads(arguments) if arguments.strip() else {}
+                except json.JSONDecodeError:
+                    args = {}
+            else:
+                args = arguments if isinstance(arguments, dict) else {}
+        return [
+            {
+                "id": str(parsed.get("id") or "pseudo_0"),
+                "name": str(parsed.get("name") or ""),
+                "args": args if isinstance(args, dict) else {},
+            }
+        ]
+    # Batch: {"tool_calls":[...]} or {"calls":[...]}
+    batch = parsed.get("tool_calls") or parsed.get("calls")
+    if isinstance(batch, list) and batch:
+        return _normalize_tool_calls(
+            [
+                {
+                    "id": item.get("id") or f"pseudo_{i}",
+                    "name": (item.get("function") or {}).get("name") or item.get("name"),
+                    "args": item.get("args")
+                    or item.get("arguments")
+                    or (item.get("function") or {}).get("arguments"),
+                }
+                for i, item in enumerate(batch)
+                if isinstance(item, dict)
+            ]
+        )
+    return None
+
+
 def _parse_openai_message(message: dict[str, Any], usage: dict[str, Any] | None, latency_ms: int) -> dict[str, Any]:
     raw_calls = message.get("tool_calls") or []
     tool_calls: list[dict[str, Any]] = []
@@ -186,6 +230,11 @@ def _parse_openai_message(message: dict[str, Any], usage: dict[str, Any] | None,
         )
 
     content = message.get("content")
+    if not tool_calls:
+        pseudo = _coerce_pseudo_tool_calls(content)
+        if pseudo:
+            tool_calls = pseudo
+            # Keep content for history; loop treats tool_calls as authoritative.
     return {
         "content": content,
         "tool_calls": tool_calls or None,
@@ -253,20 +302,26 @@ class ToolLLMClient:
         base_url = (os.environ.get("LLM_BASE_URL") or "https://api.openai.com/v1").strip().rstrip("/")
         model = (os.environ.get("LLM_MODEL") or "gpt-4o-mini").strip() or "gpt-4o-mini"
 
-        chat_messages: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages]
+        # Deep-copy so normalizing for the wire format does not mutate loop state.
+        chat_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system},
+            *[copy.deepcopy(m) for m in messages],
+        ]
         payload: dict[str, Any] = {
             "model": model,
             "messages": chat_messages,
         }
 
+        is_minimax = "minimax" in base_url.lower()
         if tools_openai_schema:
             payload["tools"] = tools_openai_schema
-        else:
+        elif not is_minimax:
             # Finalize round: ask for a JSON object when no tools are offered.
+            # MiniMax often ignores/quirks on response_format; rely on prompt + extract_json.
             payload["response_format"] = {"type": "json_object"}
 
         # MiniMax OpenAI-compatible extras (thinking / reasoning_split).
-        if "minimax" in base_url.lower():
+        if is_minimax:
             thinking_mode = (os.environ.get("LLM_THINKING") or "disabled").strip().lower()
             if thinking_mode == "adaptive":
                 payload["thinking"] = {"type": "adaptive"}
@@ -276,23 +331,55 @@ class ToolLLMClient:
             if reasoning_split in {"true", "1", "yes"}:
                 payload["reasoning_split"] = True
 
+        # Normalize message content and tool_calls for OpenAI-compatible providers.
+        for msg in chat_messages:
+            if msg.get("role") == "assistant" and msg.get("content") is None:
+                msg["content"] = ""
+            raw_calls = msg.get("tool_calls")
+            if msg.get("role") == "assistant" and isinstance(raw_calls, list) and raw_calls:
+                normalized_calls: list[dict[str, Any]] = []
+                for tc in raw_calls:
+                    if not isinstance(tc, dict):
+                        continue
+                    if "function" in tc:
+                        normalized_calls.append(tc)
+                        continue
+                    # Internal loop format: {id, name, args}
+                    args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+                    normalized_calls.append(
+                        {
+                            "id": str(tc.get("id") or ""),
+                            "type": "function",
+                            "function": {
+                                "name": str(tc.get("name") or ""),
+                                "arguments": json.dumps(args, ensure_ascii=False),
+                            },
+                        }
+                    )
+                msg["tool_calls"] = normalized_calls
+
         started = time.perf_counter()
-        if self._http_client is not None:
-            response = self._http_client.post(
-                f"{base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-        else:
-            with httpx.Client(timeout=120.0) as client:
-                response = client.post(
+        try:
+            if self._http_client is not None:
+                response = self._http_client.post(
                     f"{base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}"},
                     json=payload,
                 )
+            else:
+                with httpx.Client(timeout=180.0) as client:
+                    response = client.post(
+                        f"{base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        json=payload,
+                    )
+        except httpx.HTTPError as exc:
+            raise ValueError(f"LLM request failed: {exc}") from exc
         latency_ms = int((time.perf_counter() - started) * 1000)
 
-        response.raise_for_status()
+        if response.status_code >= 400:
+            detail = (response.text or "")[:800]
+            raise ValueError(f"LLM HTTP {response.status_code}: {detail}")
         body = response.json()
         message = body["choices"][0]["message"]
         usage = body.get("usage") or {}

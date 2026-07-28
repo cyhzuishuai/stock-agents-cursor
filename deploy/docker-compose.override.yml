@@ -1,5 +1,6 @@
-# Local/dev overrides: published ports + mock LLM.
+# Local/dev overrides: published ports.
 # Auto-merged when using compose files under deploy/.
+# LLM_MODE comes from deploy/.env (compose.yml default is mock); set LLM_MODE=live for real LLM.
 
 services:
   postgres:
@@ -21,5 +22,3 @@ services:
   agent-runtime:
     ports:
       - "8001:8001"
-    environment:
-      LLM_MODE: mock

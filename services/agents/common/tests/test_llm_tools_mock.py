@@ -334,3 +334,44 @@ def test_non_minimax_payload_omits_thinking(monkeypatch):
 
     assert "thinking" not in captured
     assert "reasoning_split" not in captured
+
+
+def test_real_mode_normalizes_internal_tool_calls_in_history(monkeypatch):
+    """Loop stores {id,name,args}; wire format must be OpenAI function tool_calls."""
+    monkeypatch.setenv("LLM_MODE", "live")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.minimaxi.com/v1")
+    monkeypatch.setenv("LLM_MODEL", "MiniMax-M3")
+
+    captured: dict = {}
+    history = [
+        {"role": "user", "content": "analyze"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "c1", "name": "get_account_view", "args": {}}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "{}"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"items":[]}', "tool_calls": None}}],
+                "usage": {},
+            },
+        )
+
+    client = ToolLLMClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    client.complete_tools("system", history, [])
+
+    asst = captured["messages"][2]
+    assert asst["content"] == ""
+    assert asst["tool_calls"][0]["type"] == "function"
+    assert asst["tool_calls"][0]["function"]["name"] == "get_account_view"
+    assert asst["tool_calls"][0]["function"]["arguments"] == "{}"
+    # Original loop history must stay in internal format.
+    assert history[1]["content"] is None
+    assert history[1]["tool_calls"][0] == {"id": "c1", "name": "get_account_view", "args": {}}

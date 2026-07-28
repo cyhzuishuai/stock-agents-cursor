@@ -37,3 +37,5 @@ async def run(request: Request) -> dict:
         raise HTTPException(status_code=500, detail=f"invalid result schema: {exc.message}") from exc
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — surface upstream LLM/tool errors to API
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
