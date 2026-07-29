@@ -63,6 +63,9 @@ services:
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-}
       LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-}
+      AGENT_CHECKPOINT_SQLITE_PATH: ${AGENT_CHECKPOINT_SQLITE_PATH:-/data/checkpoints.sqlite}
+    volumes:
+      - agent_runtime_checkpoints:/data
     restart: unless-stopped
 
   api:
@@ -107,3 +110,4 @@ services:
 
 volumes:
   pgdata:
+  agent_runtime_checkpoints:

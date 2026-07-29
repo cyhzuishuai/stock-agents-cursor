@@ -27,6 +27,7 @@ Then edit secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_API_KEY`, `ALPACA_API_KE
 | `MARKET_DATA_PROVIDER` | Default `alpaca`; set `free` (Yahoo) only as dev fallback without keys |
 | `INITIAL_CASH` | Offline/test seed only; live cash comes from Alpaca Paper account |
 | `AGENT_RUNTIME_URL` | Internal URL for Go → agent-runtime (Compose default `http://agent-runtime:8001`) |
+| `AGENT_CHECKPOINT_SQLITE_PATH` | SQLite checkpoint file path (Compose default `/data/checkpoints.sqlite`; persisted via `agent_runtime_checkpoints` volume) |
 | `INTERNAL_RUN_TOKEN` | Required for `POST /internal/runs/trigger` (`X-Internal-Token` header) |
 | `LLM_MODE` | `mock` for local/CI (override sets this); `live` for real LLM |
 | `LLM_PRIMARY_*` / `LLM_FALLBACK_*` | Recommended for live: Volcengine Ark primary + MiniMax fallback (HTTP failure only) |
