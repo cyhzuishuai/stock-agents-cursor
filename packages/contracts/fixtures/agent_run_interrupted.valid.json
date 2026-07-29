@@ -1,0 +1,17 @@
+{
+  "status": "interrupted",
+  "thread_id": "1:analyst",
+  "human_request": {
+    "question": "Approve buying 100 shares of AAPL at market price?",
+    "context": {
+      "symbol": "AAPL",
+      "qty": 100,
+      "side": "buy"
+    },
+    "options": ["approve", "reject"]
+  },
+  "trace": {
+    "run_id": "11111111-1111-1111-1111-111111111111",
+    "step": "risk_review"
+  }
+}

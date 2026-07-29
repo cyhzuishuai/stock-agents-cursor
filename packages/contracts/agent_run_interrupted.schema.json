@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent_run_interrupted.schema.json",
+  "type": "object",
+  "required": ["status", "thread_id", "human_request", "trace"],
+  "properties": {
+    "status": { "const": "interrupted" },
+    "thread_id": { "type": "string", "minLength": 1 },
+    "human_request": {
+      "type": "object",
+      "required": ["question"],
+      "properties": {
+        "question": { "type": "string", "minLength": 1 },
+        "context": { "type": "object" },
+        "options": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "trace": { "type": "object" }
+  },
+  "additionalProperties": true
+}

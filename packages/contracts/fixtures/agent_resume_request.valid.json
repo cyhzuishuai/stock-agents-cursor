@@ -1,0 +1,9 @@
+{
+  "thread_id": "1:analyst",
+  "human_response": {
+    "text": "approve",
+    "data": {
+      "approved": true
+    }
+  }
+}

@@ -75,7 +75,9 @@
       },
       "additionalProperties": false
     },
-    "prior_step_outputs": { "type": "object" }
+    "prior_step_outputs": { "type": "object" },
+    "thread_id": { "type": "string", "minLength": 1 },
+    "force_new": { "type": "boolean" }
   },
   "additionalProperties": false
 }

@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent_resume_request.schema.json",
+  "type": "object",
+  "required": ["thread_id", "human_response"],
+  "properties": {
+    "thread_id": { "type": "string", "minLength": 1 },
+    "human_response": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "data": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
