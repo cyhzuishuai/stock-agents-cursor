@@ -12,6 +12,26 @@ import (
 	"github.com/cyh/stock-agents/services/api/internal/agentsclient"
 )
 
+func TestClientResumePostsToResumePath(t *testing.T) {
+	var sawPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawPath = r.URL.Path
+		w.Write([]byte(`{"result":{},"trace":{}}`))
+	}))
+	defer srv.Close()
+	c := &agentsclient.Client{HTTP: srv.Client()}
+	_, err := c.Resume(context.Background(), srv.URL, map[string]any{
+		"thread_id":      "1:analyst",
+		"human_response": map[string]any{"text": "ok"},
+	}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sawPath != "/v1/resume" {
+		t.Fatalf("path %s", sawPath)
+	}
+}
+
 func TestCallRetriesThenSucceeds(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

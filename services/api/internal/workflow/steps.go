@@ -16,6 +16,7 @@ const (
 	StatusCreated          = "created"
 	StatusFailed           = "failed"
 	StatusAwaitingApproval = "awaiting_approval"
+	StatusAwaitingAgentInput = "awaiting_agent_input"
 	StatusExecuted         = "executed"
 	StatusCancelled        = "cancelled"
 
@@ -31,8 +32,9 @@ const (
 	ApprovalRejected  = "rejected"
 	ApprovalCancelled = "cancelled"
 
-	StepStatusOK     = "ok"
-	StepStatusFailed = "failed"
+	StepStatusOK           = "ok"
+	StepStatusFailed       = "failed"
+	StepStatusInterrupted  = "interrupted"
 
 	TriggerManual   = "manual"
 	TriggerPreOpen  = "pre_open"
