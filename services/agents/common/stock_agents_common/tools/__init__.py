@@ -9,6 +9,7 @@ import httpx
 
 from stock_agents_common.tools.account import get_account_view, get_risk_context
 from stock_agents_common.tools.bars import get_daily_bars, get_last_closes
+from stock_agents_common.tools.human_input import request_human_input
 from stock_agents_common.tools.news import get_news
 from stock_agents_common.tools.sizing import size_proposals
 from stock_agents_common.tools.web_search import web_search
@@ -31,6 +32,7 @@ __all__ = [
     "get_last_closes",
     "get_news",
     "get_risk_context",
+    "request_human_input",
     "size_proposals",
     "web_search",
 ]
