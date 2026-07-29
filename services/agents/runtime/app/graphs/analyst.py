@@ -16,7 +16,7 @@ from stock_agents_common.tools import (
 )
 
 from app.graphs.loop import openai_tool_schema, web_search_enabled
-from app.graphs.plan_loop import run_plan_loop
+from app.graphs.plan_loop import resume_plan_loop, run_plan_loop
 
 SYSTEM_PLAN = """You are an equity analyst planner.
 Output JSON {steps:[{id,title,status,tool_hint?}]} covering evidence gathering for the watchlist.
@@ -291,6 +291,35 @@ def run_analyst(
     ctx: RunContext | None = None,
 ) -> dict[str, Any]:
     return run_plan_loop(
+        agent="analyst",
+        req=req,
+        system_plan=SYSTEM_PLAN,
+        system_act=SYSTEM_ACT,
+        system_reflect=SYSTEM_REFLECT,
+        user_message=_user_message(req),
+        tools_schema=_tool_schemas(),
+        tool_registry=_tool_registry(),
+        result_schema="analyst_result",
+        align_result=align_analyst_result,
+        llm_client=llm_client,
+        ctx=ctx,
+        build_handoff=build_analyst_handoff,
+        thread_id=req.get("thread_id") if isinstance(req.get("thread_id"), str) else None,
+        force_new=bool(req.get("force_new")),
+    )
+
+
+def resume_analyst(
+    thread_id: str,
+    human_response: dict[str, Any],
+    *,
+    req: dict[str, Any],
+    llm_client: ToolLLMClient | None = None,
+    ctx: RunContext | None = None,
+) -> dict[str, Any]:
+    return resume_plan_loop(
+        thread_id,
+        human_response,
         agent="analyst",
         req=req,
         system_plan=SYSTEM_PLAN,

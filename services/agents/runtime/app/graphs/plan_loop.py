@@ -52,6 +52,14 @@ class ThreadAlreadyCompleted(RuntimeError):
     """Thread has a completed checkpoint; refuse silent re-run without force_new."""
 
 
+class ThreadNotFound(RuntimeError):
+    """No checkpoint exists for the given thread_id."""
+
+
+class ThreadNotPaused(RuntimeError):
+    """Thread exists but is not waiting on human input."""
+
+
 def _extract_size_proposals_data(tool_result: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(tool_result, dict) or not tool_result.get("ok"):
         return None
@@ -353,6 +361,7 @@ def _run_plan_loop_body(
         "size_proposals_called": False,
         "last_size_proposals": baseline if isinstance(baseline, dict) and "proposals" in baseline else None,
         "force_finalize": False,
+        "req": req,
     }
 
     def _side_snapshot() -> dict[str, Any]:
@@ -361,6 +370,7 @@ def _run_plan_loop_body(
                 "size_proposals_called": bool(bag.get("size_proposals_called")),
                 "last_size_proposals": bag.get("last_size_proposals"),
                 "force_finalize": bool(bag.get("force_finalize")),
+                "req": bag.get("req"),
             },
             "side_events": list(events),
             "side_trace_rounds": list(trace.get("rounds") or []),
@@ -380,6 +390,8 @@ def _run_plan_loop_body(
             bag["force_finalize"] = True
         if bag.get("last_size_proposals") is None and rb.get("last_size_proposals") is not None:
             bag["last_size_proposals"] = rb["last_size_proposals"]
+        if isinstance(rb.get("req"), dict):
+            bag["req"] = rb["req"]
         c_events = values.get("side_events")
         if isinstance(c_events, list) and len(c_events) > len(events):
             events.clear()

@@ -16,7 +16,7 @@ from stock_agents_common.tools import (
 )
 
 from app.graphs.loop import execute_tool_call, openai_tool_schema
-from app.graphs.plan_loop import run_plan_loop
+from app.graphs.plan_loop import resume_plan_loop, run_plan_loop
 
 SYSTEM_PLAN = """You are a portfolio sizing planner.
 Output JSON {steps:[{id,title,status,tool_hint?}]} covering account/risk views,
@@ -194,6 +194,38 @@ def run_portfolio(
         result_schema="portfolio_result",
         align_result=align_portfolio_result,
         baseline=baseline,
+        llm_client=llm_client,
+        ctx=run_ctx,
+        ensure_size_proposals=True,
+        thread_id=req.get("thread_id") if isinstance(req.get("thread_id"), str) else None,
+        force_new=bool(req.get("force_new")),
+    )
+
+
+def resume_portfolio(
+    thread_id: str,
+    human_response: dict[str, Any],
+    *,
+    req: dict[str, Any],
+    llm_client: ToolLLMClient | None = None,
+    ctx: RunContext | None = None,
+) -> dict[str, Any]:
+    run_ctx = ctx or RunContext(req=req)
+    registry = _tool_registry()
+    return resume_plan_loop(
+        thread_id,
+        human_response,
+        agent="portfolio",
+        req=req,
+        system_plan=SYSTEM_PLAN,
+        system_act=SYSTEM_ACT,
+        system_reflect=SYSTEM_REFLECT,
+        user_message=_user_message(req, {"proposals": []}),
+        tools_schema=_tool_schemas(),
+        tool_registry=registry,
+        result_schema="portfolio_result",
+        align_result=align_portfolio_result,
+        baseline=None,
         llm_client=llm_client,
         ctx=run_ctx,
         ensure_size_proposals=True,
