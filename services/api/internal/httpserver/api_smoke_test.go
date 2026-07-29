@@ -29,6 +29,11 @@ type stubRunner struct {
 	lastParams workflow.RunParams
 	runID      uint
 	err        error
+
+	resumeRunID  uint
+	resumeAgent  string
+	resumeBody   json.RawMessage
+	resumeErr    error
 }
 
 func (s *stubRunner) RunWorkflow(_ context.Context, params workflow.RunParams) (uint, error) {
@@ -40,6 +45,13 @@ func (s *stubRunner) RunWorkflow(_ context.Context, params workflow.RunParams) (
 		return s.runID, s.err
 	}
 	return s.runID, nil
+}
+
+func (s *stubRunner) ResumeAgent(_ context.Context, runID uint, agent string, humanResponse json.RawMessage) error {
+	s.resumeRunID = runID
+	s.resumeAgent = agent
+	s.resumeBody = humanResponse
+	return s.resumeErr
 }
 
 type fakeBroker struct {
@@ -777,6 +789,48 @@ func TestInternalTriggerRunRequiresToken(t *testing.T) {
 		}
 		if runner.lastParams.Trigger != workflow.TriggerManual {
 			t.Fatalf("trigger: got %q want %s", runner.lastParams.Trigger, workflow.TriggerManual)
+		}
+	})
+}
+
+func TestPostAgentResumeRoute(t *testing.T) {
+	router, gormDB, secret, runner, _ := setupAPI(t)
+	token := bearerToken(t, secret, gormDB)
+
+	t.Run("ok", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"agent":          "analyst",
+			"human_response": map[string]any{"text": "yes"},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/7/agent-resume", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status: got %d want 200 body=%s", w.Code, w.Body.String())
+		}
+		if runner.resumeRunID != 7 || runner.resumeAgent != "analyst" {
+			t.Fatalf("resume args: run=%d agent=%q", runner.resumeRunID, runner.resumeAgent)
+		}
+		if !bytes.Contains(runner.resumeBody, []byte(`"text"`)) {
+			t.Fatalf("human_response: %s", runner.resumeBody)
+		}
+	})
+
+	t.Run("conflict", func(t *testing.T) {
+		runner.resumeErr = workflow.ErrRunNotAwaitingAgentInput
+		body, _ := json.Marshal(map[string]any{
+			"agent":          "analyst",
+			"human_response": map[string]any{"text": "x"},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/7/agent-resume", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("status: got %d want 409 body=%s", w.Code, w.Body.String())
 		}
 	})
 }

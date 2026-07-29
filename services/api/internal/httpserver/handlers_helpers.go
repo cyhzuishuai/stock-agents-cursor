@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/cyh/stock-agents/services/api/internal/approvals"
@@ -19,6 +20,7 @@ import (
 // WorkflowRunner triggers a strategy workflow run (manual or scheduled).
 type WorkflowRunner interface {
 	RunWorkflow(ctx context.Context, params workflow.RunParams) (uint, error)
+	ResumeAgent(ctx context.Context, runID uint, agent string, humanResponse json.RawMessage) error
 }
 
 // SchedulerReloader hot-reloads scheduler jobs from the active strategy.

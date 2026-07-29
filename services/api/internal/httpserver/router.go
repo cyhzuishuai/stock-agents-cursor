@@ -67,6 +67,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			authed.GET("/runs", api.ListRuns)
 			authed.POST("/runs/trigger", api.PostTriggerRun)
 			authed.GET("/runs/:id", api.GetRun)
+			authed.POST("/runs/:id/agent-resume", api.PostAgentResume)
 			authed.POST("/runs/:id/cancel", approvalHandlers.CancelRun)
 			authed.GET("/approvals", api.ListApprovals)
 			authed.POST("/approvals/:id/decide", approvalHandlers.Decide)

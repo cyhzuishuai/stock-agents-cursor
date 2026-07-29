@@ -21,6 +21,8 @@ import (
 var (
 	// ErrInvalidPortfolioSchema is returned when portfolio agent output fails schema checks.
 	ErrInvalidPortfolioSchema = errors.New("invalid portfolio_result schema")
+	// ErrRunNotAwaitingAgentInput is returned when ResumeAgent is called on a run that is not paused for HITL.
+	ErrRunNotAwaitingAgentInput = errors.New("run is not awaiting agent input")
 )
 
 // RunParams configures a single workflow execution.
@@ -54,16 +56,25 @@ type agentRunRequest struct {
 	TradeDate        string               `json:"trade_date"`
 	Watchlist        []string             `json:"watchlist"`
 	Agent            string               `json:"agent"`
+	ThreadID         string               `json:"thread_id,omitempty"`
 	AccountSnapshot  AgentAccountSnapshot `json:"account_snapshot"`
 	RiskContext      AgentRiskContext     `json:"risk_context"`
 	PriorStepOutputs map[string]any       `json:"prior_step_outputs"`
 }
 
 type agentEnvelope struct {
+	Status        string          `json:"status"`
+	ThreadID      string          `json:"thread_id"`
+	HumanRequest  json.RawMessage `json:"human_request"`
 	Result        json.RawMessage `json:"result"`
 	Trace         json.RawMessage `json:"trace"`
 	Handoff       json.RawMessage `json:"handoff"`
 	WorkingMemory json.RawMessage `json:"working_memory"`
+}
+
+type agentResumeRequest struct {
+	ThreadID      string          `json:"thread_id"`
+	HumanResponse json.RawMessage `json:"human_response"`
 }
 
 type portfolioProposal struct {
@@ -127,10 +138,14 @@ func (r *Runner) runWorkflow(ctx context.Context, run *models.WorkflowRun, execu
 	if err != nil {
 		if anyFill {
 			_ = r.finalizeAfterPartialFill(ctx, run, err)
-		} else if !isPostFillStatus(run.Status) {
+		} else if !isPostFillStatus(run.Status) && run.Status != StatusAwaitingAgentInput {
 			_ = r.failRun(ctx, run, err)
 		}
 		return err
+	}
+
+	if run.Status == StatusAwaitingAgentInput {
+		return nil
 	}
 
 	if err := r.upsertNAV(ctx, run.TradeDate, marks); err != nil {
@@ -235,19 +250,162 @@ func (r *Runner) runWorkflowThroughFills(ctx context.Context, run *models.Workfl
 	riskCtx := buildRiskContext(executionMode, r.Config)
 
 	prior := map[string]any{}
-	for _, step := range AgentChain() {
+	interrupted, err := r.runAgentChain(ctx, run, AgentChain(), prior, watchlist, agentSnap, riskCtx)
+	if err != nil {
+		return nil, false, err
+	}
+	if interrupted {
+		return nil, false, nil
+	}
+
+	return r.finishProposalsAndFills(ctx, run, executionMode, prior, account)
+}
+
+// ResumeAgent continues a run paused at awaiting_agent_input after Python HITL.
+func (r *Runner) ResumeAgent(ctx context.Context, runID uint, agent string, humanResponse json.RawMessage) error {
+	unlock, err := AcquireWorkflowLock(ctx, r.Redis, DefaultLockTTL)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	var run models.WorkflowRun
+	if err := r.DB.WithContext(ctx).First(&run, runID).Error; err != nil {
+		return err
+	}
+	if run.Status != StatusAwaitingAgentInput {
+		return ErrRunNotAwaitingAgentInput
+	}
+
+	stepMeta, ok := agentStepByName(agent)
+	if !ok {
+		return fmt.Errorf("unknown agent %q", agent)
+	}
+
+	var interruptedStep models.WorkflowStepResult
+	if err := r.DB.WithContext(ctx).
+		Where("run_id = ? AND step = ? AND status = ?", runID, agent, StepStatusInterrupted).
+		First(&interruptedStep).Error; err != nil {
+		return fmt.Errorf("interrupted step for agent %s: %w", agent, err)
+	}
+
+	mode, err := r.resolveExecutionMode(ctx, RunParams{StrategyID: run.StrategyID})
+	if err != nil {
+		return err
+	}
+
+	baseURL, err := r.agentURL(agent)
+	if err != nil {
+		return err
+	}
+	threadID := fmt.Sprintf("%d:%s", runID, agent)
+	raw, err := r.Agents.Resume(ctx, baseURL, agentResumeRequest{
+		ThreadID:      threadID,
+		HumanResponse: humanResponse,
+	}, stepMeta.Timeout)
+	if err != nil {
+		_ = r.updateStep(ctx, runID, agent, StepStatusFailed, fmt.Sprintf(`{"error":%q}`, err.Error()))
+		_ = r.failRun(ctx, &run, err)
+		return fmt.Errorf("resume agent %s: %w", agent, err)
+	}
+
+	var envelope agentEnvelope
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		_ = r.failRun(ctx, &run, err)
+		return fmt.Errorf("decode resume envelope: %w", err)
+	}
+	if isInterruptedEnvelope(envelope) {
+		if err := r.updateStep(ctx, runID, agent, StepStatusInterrupted, string(raw)); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if err := r.updateStep(ctx, runID, agent, StepStatusOK, string(raw)); err != nil {
+		return err
+	}
+
+	prior, err := r.loadPriorFromOKSteps(ctx, runID)
+	if err != nil {
+		_ = r.failRun(ctx, &run, err)
+		return err
+	}
+
+	remaining, err := remainingAgentChain(agent)
+	if err != nil {
+		_ = r.failRun(ctx, &run, err)
+		return err
+	}
+
+	watchlist, err := r.loadWatchlist(ctx)
+	if err != nil {
+		_ = r.failRun(ctx, &run, err)
+		return err
+	}
+	agentSnap, err := buildAgentSnapshot(ctx, r.Broker)
+	if err != nil {
+		_ = r.failRun(ctx, &run, err)
+		return fmt.Errorf("agent snapshot: %w", err)
+	}
+	riskCtx := buildRiskContext(mode, r.Config)
+
+	interrupted, err := r.runAgentChain(ctx, &run, remaining, prior, watchlist, agentSnap, riskCtx)
+	if err != nil {
+		if run.Status != StatusAwaitingAgentInput {
+			_ = r.failRun(ctx, &run, err)
+		}
+		return err
+	}
+	if interrupted {
+		return nil
+	}
+
+	account, err := r.loadAccount(ctx)
+	if err != nil {
+		_ = r.failRun(ctx, &run, err)
+		return err
+	}
+	marks, anyFill, err := r.finishProposalsAndFills(ctx, &run, mode, prior, account)
+	if err != nil {
+		if anyFill {
+			_ = r.finalizeAfterPartialFill(ctx, &run, err)
+		} else if !isPostFillStatus(run.Status) && run.Status != StatusAwaitingAgentInput {
+			_ = r.failRun(ctx, &run, err)
+		}
+		return err
+	}
+	if run.Status == StatusAwaitingAgentInput {
+		return nil
+	}
+	if err := r.upsertNAV(ctx, run.TradeDate, marks); err != nil {
+		return fmt.Errorf("upsert nav: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) runAgentChain(
+	ctx context.Context,
+	run *models.WorkflowRun,
+	chain []AgentStep,
+	prior map[string]any,
+	watchlist []string,
+	agentSnap AgentAccountSnapshot,
+	riskCtx AgentRiskContext,
+) (interrupted bool, err error) {
+	for _, step := range chain {
 		if err := r.setRunStatus(ctx, run, step.Name); err != nil {
-			return nil, false, err
+			return false, err
 		}
 		baseURL, err := r.agentURL(step.Name)
 		if err != nil {
-			return nil, false, err
+			return false, err
 		}
 		body := agentRunRequest{
 			RunID:            strconv.FormatUint(uint64(run.ID), 10),
 			TradeDate:        run.TradeDate,
 			Watchlist:        watchlist,
 			Agent:            step.Name,
+			ThreadID:         fmt.Sprintf("%d:%s", run.ID, step.Name),
 			AccountSnapshot:  agentSnap,
 			RiskContext:      riskCtx,
 			PriorStepOutputs: prior,
@@ -255,43 +413,111 @@ func (r *Runner) runWorkflowThroughFills(ctx context.Context, run *models.Workfl
 		raw, err := r.Agents.Call(ctx, baseURL, body, step.Timeout)
 		if err != nil {
 			_ = r.persistStep(ctx, run.ID, step.Name, StepStatusFailed, fmt.Sprintf(`{"error":%q}`, err.Error()))
-			return nil, false, fmt.Errorf("agent %s: %w", step.Name, err)
-		}
-		// Persist full raw envelope {result,trace}.
-		if err := r.persistStep(ctx, run.ID, step.Name, StepStatusOK, string(raw)); err != nil {
-			return nil, false, err
+			return false, fmt.Errorf("agent %s: %w", step.Name, err)
 		}
 		var envelope agentEnvelope
 		if err := json.Unmarshal(raw, &envelope); err != nil {
-			return nil, false, fmt.Errorf("decode %s envelope: %w", step.Name, err)
+			return false, fmt.Errorf("decode %s envelope: %w", step.Name, err)
 		}
-		if len(envelope.Result) == 0 {
-			return nil, false, fmt.Errorf("agent %s: missing result in envelope", step.Name)
-		}
-		var resultObj any
-		if err := json.Unmarshal(envelope.Result, &resultObj); err != nil {
-			return nil, false, fmt.Errorf("decode %s result: %w", step.Name, err)
-		}
-		// Forward only the result object to the next agent.
-		prior[step.Name] = resultObj
-		if step.Name == StepAnalyst {
-			if len(envelope.Handoff) > 0 && string(envelope.Handoff) != "null" {
-				var handoff any
-				if err := json.Unmarshal(envelope.Handoff, &handoff); err != nil {
-					return nil, false, fmt.Errorf("decode analyst handoff: %w", err)
-				}
-				prior["analyst_handoff"] = handoff
+		if isInterruptedEnvelope(envelope) {
+			if err := r.persistStep(ctx, run.ID, step.Name, StepStatusInterrupted, string(raw)); err != nil {
+				return false, err
 			}
-			if len(envelope.WorkingMemory) > 0 && string(envelope.WorkingMemory) != "null" {
-				var mem any
-				if err := json.Unmarshal(envelope.WorkingMemory, &mem); err != nil {
-					return nil, false, fmt.Errorf("decode analyst working_memory: %w", err)
-				}
-				prior["analyst_working_memory"] = mem
+			if err := r.setRunStatus(ctx, run, StatusAwaitingAgentInput); err != nil {
+				return false, err
 			}
+			return true, nil
+		}
+		// Persist full raw envelope {result,trace}.
+		if err := r.persistStep(ctx, run.ID, step.Name, StepStatusOK, string(raw)); err != nil {
+			return false, err
+		}
+		if err := applyEnvelopeToPrior(step.Name, envelope, prior); err != nil {
+			return false, err
 		}
 	}
+	return false, nil
+}
 
+func isInterruptedEnvelope(envelope agentEnvelope) bool {
+	return envelope.Status == StepStatusInterrupted || envelope.Status == "interrupted"
+}
+
+func applyEnvelopeToPrior(stepName string, envelope agentEnvelope, prior map[string]any) error {
+	if len(envelope.Result) == 0 {
+		return fmt.Errorf("agent %s: missing result in envelope", stepName)
+	}
+	var resultObj any
+	if err := json.Unmarshal(envelope.Result, &resultObj); err != nil {
+		return fmt.Errorf("decode %s result: %w", stepName, err)
+	}
+	prior[stepName] = resultObj
+	if stepName == StepAnalyst {
+		if len(envelope.Handoff) > 0 && string(envelope.Handoff) != "null" {
+			var handoff any
+			if err := json.Unmarshal(envelope.Handoff, &handoff); err != nil {
+				return fmt.Errorf("decode analyst handoff: %w", err)
+			}
+			prior["analyst_handoff"] = handoff
+		}
+		if len(envelope.WorkingMemory) > 0 && string(envelope.WorkingMemory) != "null" {
+			var mem any
+			if err := json.Unmarshal(envelope.WorkingMemory, &mem); err != nil {
+				return fmt.Errorf("decode analyst working_memory: %w", err)
+			}
+			prior["analyst_working_memory"] = mem
+		}
+	}
+	return nil
+}
+
+func (r *Runner) loadPriorFromOKSteps(ctx context.Context, runID uint) (map[string]any, error) {
+	var steps []models.WorkflowStepResult
+	if err := r.DB.WithContext(ctx).
+		Where("run_id = ? AND status = ?", runID, StepStatusOK).
+		Order("id ASC").
+		Find(&steps).Error; err != nil {
+		return nil, err
+	}
+	prior := map[string]any{}
+	for _, step := range steps {
+		var envelope agentEnvelope
+		if err := json.Unmarshal([]byte(step.PayloadJSON), &envelope); err != nil {
+			return nil, fmt.Errorf("decode stored %s envelope: %w", step.Step, err)
+		}
+		if err := applyEnvelopeToPrior(step.Step, envelope, prior); err != nil {
+			return nil, err
+		}
+	}
+	return prior, nil
+}
+
+func agentStepByName(name string) (AgentStep, bool) {
+	for _, step := range AgentChain() {
+		if step.Name == name {
+			return step, true
+		}
+	}
+	return AgentStep{}, false
+}
+
+func remainingAgentChain(afterAgent string) ([]AgentStep, error) {
+	chain := AgentChain()
+	for i, step := range chain {
+		if step.Name == afterAgent {
+			return chain[i+1:], nil
+		}
+	}
+	return nil, fmt.Errorf("unknown agent %q", afterAgent)
+}
+
+func (r *Runner) finishProposalsAndFills(
+	ctx context.Context,
+	run *models.WorkflowRun,
+	executionMode string,
+	prior map[string]any,
+	account models.Account,
+) (map[string]float64, bool, error) {
 	portRaw, err := json.Marshal(prior[StepPortfolio])
 	if err != nil {
 		return nil, false, fmt.Errorf("marshal portfolio result: %w", err)
@@ -648,6 +874,22 @@ func (r *Runner) persistStep(ctx context.Context, runID uint, step, status, payl
 	}
 	if err := r.DB.WithContext(ctx).Create(&row).Error; err != nil {
 		return fmt.Errorf("persist step %s: %w", step, err)
+	}
+	return nil
+}
+
+func (r *Runner) updateStep(ctx context.Context, runID uint, step, status, payload string) error {
+	res := r.DB.WithContext(ctx).Model(&models.WorkflowStepResult{}).
+		Where("run_id = ? AND step = ?", runID, step).
+		Updates(map[string]any{
+			"status":       status,
+			"payload_json": payload,
+		})
+	if res.Error != nil {
+		return fmt.Errorf("update step %s: %w", step, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("update step %s: no row", step)
 	}
 	return nil
 }

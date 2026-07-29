@@ -676,6 +676,15 @@ type stubResponses struct {
 	analyst, portfolio string
 	failAt             string
 	lastPortfolioPrior map[string]any // filled when agent=portfolio
+
+	// HITL / resume stubs
+	resumeAnalyst      string
+	resumePortfolio    string
+	runCallCounts      map[string]int
+	resumeCallCounts   map[string]int
+	lastRunThreadID    string
+	lastResumeThreadID string
+	lastResumeBody     map[string]any
 }
 
 type runnerEnv struct {
@@ -742,45 +751,98 @@ func setupRunnerEnv(t *testing.T, stubs *stubResponses) *runnerEnv {
 
 func startAgentRuntimeStub(t *testing.T, stubs *stubResponses) string {
 	t.Helper()
+	if stubs.runCallCounts == nil {
+		stubs.runCallCounts = map[string]int{}
+	}
+	if stubs.resumeCallCounts == nil {
+		stubs.resumeCallCounts = map[string]int{}
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/run" {
-			http.NotFound(w, r)
-			return
-		}
-		var req struct {
-			Agent            string         `json:"agent"`
-			PriorStepOutputs map[string]any `json:"prior_step_outputs"`
-		}
-		dec := json.NewDecoder(r.Body)
-		if err := dec.Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var body string
-		switch req.Agent {
-		case workflow.StepAnalyst:
-			body = stubs.analyst
-		case workflow.StepPortfolio:
-			stubs.lastPortfolioPrior = req.PriorStepOutputs
-			body = stubs.portfolio
+		switch r.URL.Path {
+		case "/v1/run":
+			var req struct {
+				Agent            string         `json:"agent"`
+				ThreadID         string         `json:"thread_id"`
+				PriorStepOutputs map[string]any `json:"prior_step_outputs"`
+			}
+			dec := json.NewDecoder(r.Body)
+			if err := dec.Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			stubs.runCallCounts[req.Agent]++
+			stubs.lastRunThreadID = req.ThreadID
+			var body string
+			switch req.Agent {
+			case workflow.StepAnalyst:
+				body = stubs.analyst
+			case workflow.StepPortfolio:
+				stubs.lastPortfolioPrior = req.PriorStepOutputs
+				body = stubs.portfolio
+			default:
+				http.Error(w, "unknown agent", http.StatusBadRequest)
+				return
+			}
+			if stubs.failAt == req.Agent {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":"boom"}`))
+				return
+			}
+			if body == "" {
+				http.Error(w, "empty stub", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		case "/v1/resume":
+			var req struct {
+				ThreadID       string         `json:"thread_id"`
+				HumanResponse  map[string]any `json:"human_response"`
+			}
+			dec := json.NewDecoder(r.Body)
+			if err := dec.Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			stubs.lastResumeThreadID = req.ThreadID
+			stubs.lastResumeBody = map[string]any{
+				"thread_id":      req.ThreadID,
+				"human_response": req.HumanResponse,
+			}
+			agent := req.ThreadID
+			if i := strings.LastIndex(req.ThreadID, ":"); i >= 0 {
+				agent = req.ThreadID[i+1:]
+			}
+			stubs.resumeCallCounts[agent]++
+			var body string
+			switch agent {
+			case workflow.StepAnalyst:
+				body = stubs.resumeAnalyst
+			case workflow.StepPortfolio:
+				body = stubs.resumePortfolio
+			default:
+				http.Error(w, "unknown resume agent", http.StatusBadRequest)
+				return
+			}
+			if body == "" {
+				http.Error(w, "empty resume stub", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
 		default:
-			http.Error(w, "unknown agent", http.StatusBadRequest)
-			return
+			http.NotFound(w, r)
 		}
-		if stubs.failAt == req.Agent {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error":"boom"}`))
-			return
-		}
-		if body == "" {
-			http.Error(w, "empty stub", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
+}
+
+func interruptedEnvelopeJSON(threadID, question string) string {
+	return fmt.Sprintf(
+		`{"status":"interrupted","thread_id":%q,"human_request":{"question":%q},"trace":{"agent":"test","stop_reason":"interrupted"}}`,
+		threadID, question,
+	)
 }
 
 func envelopeJSON(result string) string {
@@ -1219,5 +1281,171 @@ func TestRunWorkflowPostSubmitGetOrderErrorKeepsSubmitted(t *testing.T) {
 	}
 	if run.Status != workflow.StatusFailed {
 		t.Fatalf("run status: got %q want failed", run.Status)
+	}
+}
+
+func TestRunWorkflowInterruptedAnalystStopsChain(t *testing.T) {
+	stubs := &stubResponses{
+		analyst:   interruptedEnvelopeJSON("placeholder", "confirm thesis?"),
+		portfolio: portfolioBuyJSON(10, 1910, -1910),
+	}
+	env := setupRunnerEnv(t, stubs)
+
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusAwaitingAgentInput {
+		t.Fatalf("run status: got %q want %s", run.Status, workflow.StatusAwaitingAgentInput)
+	}
+	if run.Status == workflow.StatusAwaitingApproval {
+		t.Fatal("must not use awaiting_approval for agent HITL")
+	}
+
+	wantThread := fmt.Sprintf("%d:%s", runID, workflow.StepAnalyst)
+	if stubs.lastRunThreadID != wantThread {
+		t.Fatalf("thread_id: got %q want %q", stubs.lastRunThreadID, wantThread)
+	}
+	if stubs.runCallCounts[workflow.StepPortfolio] != 0 {
+		t.Fatalf("portfolio calls: got %d want 0", stubs.runCallCounts[workflow.StepPortfolio])
+	}
+
+	var steps []models.WorkflowStepResult
+	if err := env.db.Where("run_id = ?", runID).Order("id").Find(&steps).Error; err != nil {
+		t.Fatalf("steps: %v", err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("steps count: got %d want 1", len(steps))
+	}
+	if steps[0].Step != workflow.StepAnalyst || steps[0].Status != workflow.StepStatusInterrupted {
+		t.Fatalf("step: got %s/%s want analyst/interrupted", steps[0].Step, steps[0].Status)
+	}
+
+	var proposals int64
+	if err := env.db.Model(&models.TradeProposal{}).Where("run_id = ?", runID).Count(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if proposals != 0 {
+		t.Fatalf("proposals: got %d want 0", proposals)
+	}
+}
+
+func TestResumeAgentContinuesChainToExecuted(t *testing.T) {
+	stubs := &stubResponses{
+		analyst:       interruptedEnvelopeJSON("placeholder", "confirm thesis?"),
+		resumeAnalyst: analystResultJSON(),
+		portfolio:     portfolioBuyJSON(10, 1910, -1910),
+	}
+	env := setupRunnerEnv(t, stubs)
+
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+
+	err = env.runner.ResumeAgent(context.Background(), runID, workflow.StepAnalyst, json.RawMessage(`{"text":"yes"}`))
+	if err != nil {
+		t.Fatalf("ResumeAgent: %v", err)
+	}
+
+	wantThread := fmt.Sprintf("%d:%s", runID, workflow.StepAnalyst)
+	if stubs.lastResumeThreadID != wantThread {
+		t.Fatalf("resume thread_id: got %q want %q", stubs.lastResumeThreadID, wantThread)
+	}
+	if stubs.resumeCallCounts[workflow.StepAnalyst] != 1 {
+		t.Fatalf("resume calls: got %d want 1", stubs.resumeCallCounts[workflow.StepAnalyst])
+	}
+	if stubs.runCallCounts[workflow.StepPortfolio] != 1 {
+		t.Fatalf("portfolio calls after resume: got %d want 1", stubs.runCallCounts[workflow.StepPortfolio])
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusExecuted {
+		t.Fatalf("run status: got %q want executed", run.Status)
+	}
+
+	var steps []models.WorkflowStepResult
+	if err := env.db.Where("run_id = ?", runID).Order("id").Find(&steps).Error; err != nil {
+		t.Fatalf("steps: %v", err)
+	}
+	if len(steps) != 2 {
+		t.Fatalf("steps count: got %d want 2", len(steps))
+	}
+	if steps[0].Step != workflow.StepAnalyst || steps[0].Status != workflow.StepStatusOK {
+		t.Fatalf("analyst step: got %s/%s want ok", steps[0].Step, steps[0].Status)
+	}
+	if steps[1].Step != workflow.StepPortfolio || steps[1].Status != workflow.StepStatusOK {
+		t.Fatalf("portfolio step: got %s/%s want ok", steps[1].Step, steps[1].Status)
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 1 || proposals[0].Status != workflow.ProposalFilled {
+		t.Fatalf("proposal: got %+v", proposals)
+	}
+}
+
+func TestResumeAgentConflictWhenNotAwaiting(t *testing.T) {
+	env := setupRunnerEnv(t, &stubResponses{
+		analyst:   analystResultJSON(),
+		portfolio: portfolioBuyJSON(10, 1910, -1910),
+	})
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+	err = env.runner.ResumeAgent(context.Background(), runID, workflow.StepAnalyst, json.RawMessage(`{"text":"x"}`))
+	if !errors.Is(err, workflow.ErrRunNotAwaitingAgentInput) {
+		t.Fatalf("ResumeAgent: got %v want ErrRunNotAwaitingAgentInput", err)
+	}
+}
+
+func TestResumeAgentInterruptedAgainKeepsAwaiting(t *testing.T) {
+	stubs := &stubResponses{
+		analyst:       interruptedEnvelopeJSON("placeholder", "q1"),
+		resumeAnalyst: interruptedEnvelopeJSON("placeholder", "q2"),
+		portfolio:     portfolioBuyJSON(10, 1910, -1910),
+	}
+	env := setupRunnerEnv(t, stubs)
+
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+	err = env.runner.ResumeAgent(context.Background(), runID, workflow.StepAnalyst, json.RawMessage(`{"text":"more"}`))
+	if err != nil {
+		t.Fatalf("ResumeAgent: %v", err)
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusAwaitingAgentInput {
+		t.Fatalf("run status: got %q want %s", run.Status, workflow.StatusAwaitingAgentInput)
+	}
+	if stubs.runCallCounts[workflow.StepPortfolio] != 0 {
+		t.Fatalf("portfolio must not run: got %d", stubs.runCallCounts[workflow.StepPortfolio])
+	}
+
+	var step models.WorkflowStepResult
+	if err := env.db.Where("run_id = ? AND step = ?", runID, workflow.StepAnalyst).First(&step).Error; err != nil {
+		t.Fatalf("step: %v", err)
+	}
+	if step.Status != workflow.StepStatusInterrupted {
+		t.Fatalf("step status: got %q want interrupted", step.Status)
+	}
+	if !strings.Contains(step.PayloadJSON, `"q2"`) {
+		t.Fatalf("payload should refresh human_request: %s", step.PayloadJSON)
 	}
 }
