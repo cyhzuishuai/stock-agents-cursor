@@ -23,6 +23,10 @@ var (
 	ErrInvalidPortfolioSchema = errors.New("invalid portfolio_result schema")
 	// ErrRunNotAwaitingAgentInput is returned when ResumeAgent is called on a run that is not paused for HITL.
 	ErrRunNotAwaitingAgentInput = errors.New("run is not awaiting agent input")
+	// ErrUnknownAgent is returned when ResumeAgent is called with an agent not in the chain.
+	ErrUnknownAgent = errors.New("unknown agent")
+	// ErrNoInterruptedStep is returned when the named agent has no interrupted step on the run.
+	ErrNoInterruptedStep = errors.New("no interrupted step for agent")
 )
 
 // RunParams configures a single workflow execution.
@@ -262,41 +266,45 @@ func (r *Runner) runWorkflowThroughFills(ctx context.Context, run *models.Workfl
 }
 
 // ResumeAgent continues a run paused at awaiting_agent_input after Python HITL.
-func (r *Runner) ResumeAgent(ctx context.Context, runID uint, agent string, humanResponse json.RawMessage) error {
+// On success it returns the resulting run status (e.g. awaiting_agent_input or executed).
+func (r *Runner) ResumeAgent(ctx context.Context, runID uint, agent string, humanResponse json.RawMessage) (string, error) {
 	unlock, err := AcquireWorkflowLock(ctx, r.Redis, DefaultLockTTL)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer unlock()
 
 	var run models.WorkflowRun
 	if err := r.DB.WithContext(ctx).First(&run, runID).Error; err != nil {
-		return err
+		return "", err
 	}
 	if run.Status != StatusAwaitingAgentInput {
-		return ErrRunNotAwaitingAgentInput
+		return "", ErrRunNotAwaitingAgentInput
 	}
 
 	stepMeta, ok := agentStepByName(agent)
 	if !ok {
-		return fmt.Errorf("unknown agent %q", agent)
+		return "", ErrUnknownAgent
 	}
 
 	var interruptedStep models.WorkflowStepResult
 	if err := r.DB.WithContext(ctx).
 		Where("run_id = ? AND step = ? AND status = ?", runID, agent, StepStatusInterrupted).
 		First(&interruptedStep).Error; err != nil {
-		return fmt.Errorf("interrupted step for agent %s: %w", agent, err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", ErrNoInterruptedStep
+		}
+		return "", err
 	}
 
 	mode, err := r.resolveExecutionMode(ctx, RunParams{StrategyID: run.StrategyID})
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	baseURL, err := r.agentURL(agent)
 	if err != nil {
-		return err
+		return "", err
 	}
 	threadID := fmt.Sprintf("%d:%s", runID, agent)
 	raw, err := r.Agents.Resume(ctx, baseURL, agentResumeRequest{
@@ -306,46 +314,50 @@ func (r *Runner) ResumeAgent(ctx context.Context, runID uint, agent string, huma
 	if err != nil {
 		_ = r.updateStep(ctx, runID, agent, StepStatusFailed, fmt.Sprintf(`{"error":%q}`, err.Error()))
 		_ = r.failRun(ctx, &run, err)
-		return fmt.Errorf("resume agent %s: %w", agent, err)
+		return "", fmt.Errorf("resume agent %s: %w", agent, err)
 	}
 
 	var envelope agentEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		_ = r.failRun(ctx, &run, err)
-		return fmt.Errorf("decode resume envelope: %w", err)
+		return "", fmt.Errorf("decode resume envelope: %w", err)
 	}
 	if isInterruptedEnvelope(envelope) {
 		if err := r.updateStep(ctx, runID, agent, StepStatusInterrupted, string(raw)); err != nil {
-			return err
+			return "", err
 		}
-		return nil
+		return StatusAwaitingAgentInput, nil
 	}
 
 	if err := r.updateStep(ctx, runID, agent, StepStatusOK, string(raw)); err != nil {
-		return err
+		return "", err
+	}
+	// Leave awaiting_agent_input so post-agent failures can failRun (esp. last-agent resume).
+	if err := r.setRunStatus(ctx, &run, agent); err != nil {
+		return "", err
 	}
 
 	prior, err := r.loadPriorFromOKSteps(ctx, runID)
 	if err != nil {
 		_ = r.failRun(ctx, &run, err)
-		return err
+		return "", err
 	}
 
 	remaining, err := remainingAgentChain(agent)
 	if err != nil {
 		_ = r.failRun(ctx, &run, err)
-		return err
+		return "", err
 	}
 
 	watchlist, err := r.loadWatchlist(ctx)
 	if err != nil {
 		_ = r.failRun(ctx, &run, err)
-		return err
+		return "", err
 	}
 	agentSnap, err := buildAgentSnapshot(ctx, r.Broker)
 	if err != nil {
 		_ = r.failRun(ctx, &run, err)
-		return fmt.Errorf("agent snapshot: %w", err)
+		return "", fmt.Errorf("agent snapshot: %w", err)
 	}
 	riskCtx := buildRiskContext(mode, r.Config)
 
@@ -354,16 +366,16 @@ func (r *Runner) ResumeAgent(ctx context.Context, runID uint, agent string, huma
 		if run.Status != StatusAwaitingAgentInput {
 			_ = r.failRun(ctx, &run, err)
 		}
-		return err
+		return "", err
 	}
 	if interrupted {
-		return nil
+		return StatusAwaitingAgentInput, nil
 	}
 
 	account, err := r.loadAccount(ctx)
 	if err != nil {
 		_ = r.failRun(ctx, &run, err)
-		return err
+		return "", err
 	}
 	marks, anyFill, err := r.finishProposalsAndFills(ctx, &run, mode, prior, account)
 	if err != nil {
@@ -372,15 +384,15 @@ func (r *Runner) ResumeAgent(ctx context.Context, runID uint, agent string, huma
 		} else if !isPostFillStatus(run.Status) && run.Status != StatusAwaitingAgentInput {
 			_ = r.failRun(ctx, &run, err)
 		}
-		return err
+		return "", err
 	}
 	if run.Status == StatusAwaitingAgentInput {
-		return nil
+		return StatusAwaitingAgentInput, nil
 	}
 	if err := r.upsertNAV(ctx, run.TradeDate, marks); err != nil {
-		return fmt.Errorf("upsert nav: %w", err)
+		return "", fmt.Errorf("upsert nav: %w", err)
 	}
-	return nil
+	return run.Status, nil
 }
 
 func (r *Runner) runAgentChain(

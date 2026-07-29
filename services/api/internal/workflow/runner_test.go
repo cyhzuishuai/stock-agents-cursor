@@ -1348,9 +1348,12 @@ func TestResumeAgentContinuesChainToExecuted(t *testing.T) {
 		t.Fatalf("RunWorkflow: %v", err)
 	}
 
-	err = env.runner.ResumeAgent(context.Background(), runID, workflow.StepAnalyst, json.RawMessage(`{"text":"yes"}`))
+	status, err := env.runner.ResumeAgent(context.Background(), runID, workflow.StepAnalyst, json.RawMessage(`{"text":"yes"}`))
 	if err != nil {
 		t.Fatalf("ResumeAgent: %v", err)
+	}
+	if status != workflow.StatusExecuted {
+		t.Fatalf("ResumeAgent status: got %q want executed", status)
 	}
 
 	wantThread := fmt.Sprintf("%d:%s", runID, workflow.StepAnalyst)
@@ -1404,7 +1407,7 @@ func TestResumeAgentConflictWhenNotAwaiting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunWorkflow: %v", err)
 	}
-	err = env.runner.ResumeAgent(context.Background(), runID, workflow.StepAnalyst, json.RawMessage(`{"text":"x"}`))
+	_, err = env.runner.ResumeAgent(context.Background(), runID, workflow.StepAnalyst, json.RawMessage(`{"text":"x"}`))
 	if !errors.Is(err, workflow.ErrRunNotAwaitingAgentInput) {
 		t.Fatalf("ResumeAgent: got %v want ErrRunNotAwaitingAgentInput", err)
 	}
@@ -1422,9 +1425,12 @@ func TestResumeAgentInterruptedAgainKeepsAwaiting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunWorkflow: %v", err)
 	}
-	err = env.runner.ResumeAgent(context.Background(), runID, workflow.StepAnalyst, json.RawMessage(`{"text":"more"}`))
+	status, err := env.runner.ResumeAgent(context.Background(), runID, workflow.StepAnalyst, json.RawMessage(`{"text":"more"}`))
 	if err != nil {
 		t.Fatalf("ResumeAgent: %v", err)
+	}
+	if status != workflow.StatusAwaitingAgentInput {
+		t.Fatalf("ResumeAgent status: got %q want awaiting_agent_input", status)
 	}
 
 	var run models.WorkflowRun
@@ -1447,5 +1453,116 @@ func TestResumeAgentInterruptedAgainKeepsAwaiting(t *testing.T) {
 	}
 	if !strings.Contains(step.PayloadJSON, `"q2"`) {
 		t.Fatalf("payload should refresh human_request: %s", step.PayloadJSON)
+	}
+}
+
+func TestResumeAgentPortfolioLastAgentToExecuted(t *testing.T) {
+	stubs := &stubResponses{
+		analyst:         analystResultJSON(),
+		portfolio:       interruptedEnvelopeJSON("placeholder", "size ok?"),
+		resumePortfolio: portfolioBuyJSON(10, 1910, -1910),
+	}
+	env := setupRunnerEnv(t, stubs)
+
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusAwaitingAgentInput {
+		t.Fatalf("run status: got %q want awaiting_agent_input", run.Status)
+	}
+
+	status, err := env.runner.ResumeAgent(context.Background(), runID, workflow.StepPortfolio, json.RawMessage(`{"text":"go"}`))
+	if err != nil {
+		t.Fatalf("ResumeAgent: %v", err)
+	}
+	if status != workflow.StatusExecuted {
+		t.Fatalf("ResumeAgent status: got %q want executed", status)
+	}
+	if stubs.resumeCallCounts[workflow.StepPortfolio] != 1 {
+		t.Fatalf("portfolio resume calls: got %d want 1", stubs.resumeCallCounts[workflow.StepPortfolio])
+	}
+
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("reload run: %v", err)
+	}
+	if run.Status != workflow.StatusExecuted {
+		t.Fatalf("run status: got %q want executed", run.Status)
+	}
+
+	var step models.WorkflowStepResult
+	if err := env.db.Where("run_id = ? AND step = ?", runID, workflow.StepPortfolio).First(&step).Error; err != nil {
+		t.Fatalf("portfolio step: %v", err)
+	}
+	if step.Status != workflow.StepStatusOK {
+		t.Fatalf("portfolio step status: got %q want ok", step.Status)
+	}
+
+	var proposals []models.TradeProposal
+	if err := env.db.Where("run_id = ?", runID).Find(&proposals).Error; err != nil {
+		t.Fatalf("proposals: %v", err)
+	}
+	if len(proposals) != 1 || proposals[0].Status != workflow.ProposalFilled {
+		t.Fatalf("proposal: got %+v", proposals)
+	}
+}
+
+func TestResumeAgentLastAgentPostFillFailureMarksFailed(t *testing.T) {
+	stubs := &stubResponses{
+		analyst:         analystResultJSON(),
+		portfolio:       interruptedEnvelopeJSON("placeholder", "size?"),
+		resumePortfolio: envelopeJSON(`{"warnings":[]}`), // missing proposals → schema fail after step ok
+	}
+	env := setupRunnerEnv(t, stubs)
+
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+
+	_, err = env.runner.ResumeAgent(context.Background(), runID, workflow.StepPortfolio, json.RawMessage(`{"text":"go"}`))
+	if err == nil {
+		t.Fatal("expected ResumeAgent error from invalid portfolio schema")
+	}
+
+	var run models.WorkflowRun
+	if err := env.db.First(&run, runID).Error; err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if run.Status != workflow.StatusFailed {
+		t.Fatalf("run status: got %q want failed (must not stick on awaiting_agent_input)", run.Status)
+	}
+
+	var step models.WorkflowStepResult
+	if err := env.db.Where("run_id = ? AND step = ?", runID, workflow.StepPortfolio).First(&step).Error; err != nil {
+		t.Fatalf("portfolio step: %v", err)
+	}
+	if step.Status != workflow.StepStatusOK {
+		t.Fatalf("portfolio step should stay ok after resume: got %q", step.Status)
+	}
+}
+
+func TestResumeAgentWrongAgentNoInterruptedStep(t *testing.T) {
+	stubs := &stubResponses{
+		analyst:   interruptedEnvelopeJSON("placeholder", "q"),
+		portfolio: portfolioBuyJSON(10, 1910, -1910),
+	}
+	env := setupRunnerEnv(t, stubs)
+
+	runID, err := env.runner.RunWorkflow(context.Background(), workflowParams(tradeDate))
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+	_, err = env.runner.ResumeAgent(context.Background(), runID, workflow.StepPortfolio, json.RawMessage(`{"text":"x"}`))
+	if !errors.Is(err, workflow.ErrNoInterruptedStep) {
+		t.Fatalf("ResumeAgent: got %v want ErrNoInterruptedStep", err)
+	}
+	_, err = env.runner.ResumeAgent(context.Background(), runID, "research", json.RawMessage(`{"text":"x"}`))
+	if !errors.Is(err, workflow.ErrUnknownAgent) {
+		t.Fatalf("ResumeAgent: got %v want ErrUnknownAgent", err)
 	}
 }

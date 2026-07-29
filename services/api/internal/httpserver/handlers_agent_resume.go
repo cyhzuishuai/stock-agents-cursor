@@ -40,18 +40,20 @@ func (h *API) PostAgentResume(c *gin.Context) {
 		return
 	}
 
-	err = h.Runner.ResumeAgent(c.Request.Context(), uint(runID), req.Agent, req.HumanResponse)
+	status, err := h.Runner.ResumeAgent(c.Request.Context(), uint(runID), req.Agent, req.HumanResponse)
 	if err != nil {
-		if errors.Is(err, workflow.ErrRunNotAwaitingAgentInput) {
+		switch {
+		case errors.Is(err, workflow.ErrRunNotAwaitingAgentInput),
+			errors.Is(err, workflow.ErrNoInterruptedStep):
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-			return
-		}
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		case errors.Is(err, workflow.ErrUnknownAgent):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, gorm.ErrRecordNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
-			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"run_id": runID, "status": "resumed"})
+	c.JSON(http.StatusOK, gin.H{"run_id": runID, "status": status})
 }

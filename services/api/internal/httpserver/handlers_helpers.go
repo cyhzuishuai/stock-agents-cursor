@@ -20,7 +20,7 @@ import (
 // WorkflowRunner triggers a strategy workflow run (manual or scheduled).
 type WorkflowRunner interface {
 	RunWorkflow(ctx context.Context, params workflow.RunParams) (uint, error)
-	ResumeAgent(ctx context.Context, runID uint, agent string, humanResponse json.RawMessage) error
+	ResumeAgent(ctx context.Context, runID uint, agent string, humanResponse json.RawMessage) (status string, err error)
 }
 
 // SchedulerReloader hot-reloads scheduler jobs from the active strategy.
