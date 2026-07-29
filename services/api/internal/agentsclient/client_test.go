@@ -32,6 +32,28 @@ func TestClientResumePostsToResumePath(t *testing.T) {
 	}
 }
 
+func TestResumeDoesNotRetryOn500(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("internal error"))
+	}))
+	defer server.Close()
+
+	client := &agentsclient.Client{MaxRetries: 2}
+
+	_, err := client.Resume(context.Background(), server.URL, map[string]any{
+		"thread_id": "1:analyst",
+	}, 5*time.Second)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("expected 1 attempt, got %d", attempts.Load())
+	}
+}
+
 func TestCallRetriesThenSucceeds(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
