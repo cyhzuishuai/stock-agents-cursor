@@ -4,11 +4,17 @@ Control flow (locked):
 
 ```text
 plan_node → act_model
-act_model → tools | reflect
-tools → reflect
+act_model → tools_normals | reflect | finalize
+tools_normals → tools_human | reflect
+tools_human → reflect
 reflect → act_model | plan_node | finalize_node
 finalize_node → END
 ```
+
+`tools_normals` checkpoints before `tools_human` interrupt so durable bag/messages
+survive resume; read-only tool re-runs in a single-node interrupt are avoided for
+normals that completed in `tools_normals`. V1 still accepts idempotent re-reads
+only if a future path re-enters normals without message ids.
 """
 
 from __future__ import annotations
@@ -87,6 +93,50 @@ class PlanLoopState(TypedDict, total=False):
     last_tool_calls: list[dict[str, Any]] | None
     last_content: str | None
     reflect_decision: str | None
+    # Durable side-channel (survives interrupt/resume via checkpointer).
+    runtime_bag: dict[str, Any]
+    side_events: list[dict[str, Any]]
+    side_trace_rounds: list[dict[str, Any]]
+    side_usage: dict[str, int]
+    pending_human_calls: list[dict[str, Any]] | None
+
+
+def _tool_message_ids(messages: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(m.get("tool_call_id") or "")
+        for m in messages
+        if m.get("role") == "tool" and m.get("tool_call_id")
+    }
+
+
+def _extract_size_from_tool_content(content: Any) -> dict[str, Any] | None:
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except Exception:  # noqa: BLE001
+            return None
+    if not isinstance(content, dict):
+        return None
+    sized = _extract_size_proposals_data(content)
+    if sized is not None:
+        return sized
+    if "proposals" in content:
+        return content
+    data = content.get("data")
+    if isinstance(data, dict) and "proposals" in data:
+        return data
+    return None
+
+
+def _rehydrate_size_from_messages(messages: list[dict[str, Any]], bag: dict[str, Any]) -> None:
+    for msg in reversed(messages or []):
+        if msg.get("role") != "tool" or str(msg.get("name") or "") != "size_proposals":
+            continue
+        bag["size_proposals_called"] = True
+        sized = _extract_size_from_tool_content(msg.get("content"))
+        if sized is not None and bag.get("last_size_proposals") is None:
+            bag["last_size_proposals"] = sized
+        return
 
 
 def _utcnow_iso() -> str:
@@ -305,7 +355,56 @@ def _run_plan_loop_body(
         "force_finalize": False,
     }
 
-    if ensure_size_proposals and isinstance(baseline, dict) and "proposals" in baseline:
+    def _side_snapshot() -> dict[str, Any]:
+        return {
+            "runtime_bag": {
+                "size_proposals_called": bool(bag.get("size_proposals_called")),
+                "last_size_proposals": bag.get("last_size_proposals"),
+                "force_finalize": bool(bag.get("force_finalize")),
+            },
+            "side_events": list(events),
+            "side_trace_rounds": list(trace.get("rounds") or []),
+            "side_usage": {
+                "prompt_tokens": int(usage_totals["prompt_tokens"]),
+                "completion_tokens": int(usage_totals["completion_tokens"]),
+            },
+        }
+
+    def _merge_side_from_values(values: dict[str, Any] | None) -> None:
+        if not values:
+            return
+        rb = values.get("runtime_bag") if isinstance(values.get("runtime_bag"), dict) else {}
+        if rb.get("size_proposals_called"):
+            bag["size_proposals_called"] = True
+        if rb.get("force_finalize"):
+            bag["force_finalize"] = True
+        if bag.get("last_size_proposals") is None and rb.get("last_size_proposals") is not None:
+            bag["last_size_proposals"] = rb["last_size_proposals"]
+        c_events = values.get("side_events")
+        if isinstance(c_events, list) and len(c_events) > len(events):
+            events.clear()
+            events.extend(c_events)
+        c_rounds = values.get("side_trace_rounds")
+        if isinstance(c_rounds, list) and len(c_rounds) > len(trace.get("rounds") or []):
+            trace["rounds"] = list(c_rounds)
+        c_usage = values.get("side_usage")
+        if isinstance(c_usage, dict):
+            usage_totals["prompt_tokens"] = max(
+                int(usage_totals["prompt_tokens"]),
+                int(c_usage.get("prompt_tokens") or 0),
+            )
+            usage_totals["completion_tokens"] = max(
+                int(usage_totals["completion_tokens"]),
+                int(c_usage.get("completion_tokens") or 0),
+            )
+        _rehydrate_size_from_messages(list(values.get("messages") or []), bag)
+
+    def _pull_side(state: PlanLoopState) -> None:
+        _merge_side_from_values(dict(state))
+
+    # Fresh run only: inject deterministic baseline into in-memory bag/trace.
+    # Resume rehydrates from checkpoint instead (avoids duplicate baseline rounds).
+    if resume_payload is None and ensure_size_proposals and isinstance(baseline, dict) and "proposals" in baseline:
         bag["size_proposals_called"] = True
         append_round(
             trace,
@@ -344,6 +443,7 @@ def _run_plan_loop_body(
         return aligned
 
     def plan_node(state: PlanLoopState) -> dict[str, Any]:
+        _pull_side(state)
         user_content = user_message
         existing_plan = state.get("plan") or []
         # First entry always has the initial user message in state; only treat as
@@ -376,9 +476,11 @@ def _run_plan_loop_body(
             "last_tool_calls": None,
             "stop_reason": "",
             "result": None,
+            **_side_snapshot(),
         }
 
     def act_model(state: PlanLoopState) -> dict[str, Any]:
+        _pull_side(state)
         round_i = int(state.get("round_i") or 0)
         if round_i >= max_rounds or bag.get("force_finalize"):
             bag["force_finalize"] = True
@@ -387,6 +489,7 @@ def _run_plan_loop_body(
                 "stop_reason": "max_rounds",
                 "last_tool_calls": None,
                 "reflect_decision": "finalize",
+                **_side_snapshot(),
             }
 
         messages = list(state.get("messages") or [])
@@ -447,6 +550,7 @@ def _run_plan_loop_body(
                 "stop_reason": "",
                 "result": None,
                 "reflect_decision": None,
+                **_side_snapshot(),
             }
 
         # No tool_calls: treat content as step note and route to reflect.
@@ -469,13 +573,17 @@ def _run_plan_loop_body(
             "stop_reason": "",
             "result": None,
             "reflect_decision": None,
+            **_side_snapshot(),
         }
 
-    def tools_node(state: PlanLoopState) -> dict[str, Any]:
+    def tools_normals(state: PlanLoopState) -> dict[str, Any]:
+        """Execute non-human tools and checkpoint before any interrupt."""
+        _pull_side(state)
         tool_calls = state.get("last_tool_calls") or []
         messages = list(state.get("messages") or [])
         memory = dict(state.get("working_memory") or empty_working_memory())
         tool_trace_entries: list[dict[str, Any]] = []
+        done_ids = _tool_message_ids(messages)
 
         normal_calls: list[dict[str, Any]] = []
         human_calls: list[dict[str, Any]] = []
@@ -521,6 +629,10 @@ def _run_plan_loop_body(
             if not isinstance(args, dict):
                 args = {}
             tc_id = str(tc.get("id") or "")
+            if tc_id and tc_id in done_ids:
+                # Idempotent: already applied (checkpointed messages after tools_normals).
+                continue
+
             executed = execute_tool_call(name=name, args=args, ctx=run_ctx, registry=tool_registry)
 
             if name == "size_proposals":
@@ -537,9 +649,66 @@ def _run_plan_loop_body(
                 result=executed["result"],
                 error=executed["error"],
             )
+            if tc_id:
+                done_ids.add(tc_id)
 
-        # V1: interrupt on first valid human call after normals; extras → failed tools.
-        for idx, tc in enumerate(human_calls):
+        if trace["rounds"]:
+            # Merge tool entries into the latest act round (may already have tools from a prior pass).
+            prior = list(trace["rounds"][-1].get("tools") or [])
+            prior_ids = {str(t.get("id") or "") for t in prior}
+            for entry in tool_trace_entries:
+                if str(entry.get("id") or "") not in prior_ids:
+                    prior.append(entry)
+            trace["rounds"][-1]["tools"] = prior
+
+        return {
+            "messages": messages,
+            "working_memory": memory,
+            "last_tool_calls": None,
+            "pending_human_calls": human_calls or None,
+            **_side_snapshot(),
+        }
+
+    def tools_human(state: PlanLoopState) -> dict[str, Any]:
+        """Interrupt on first valid human call; extras after a scheduled interrupt fail."""
+        _pull_side(state)
+        human_calls = list(state.get("pending_human_calls") or [])
+        messages = list(state.get("messages") or [])
+        memory = dict(state.get("working_memory") or empty_working_memory())
+        tool_trace_entries: list[dict[str, Any]] = []
+        interrupt_scheduled = False
+
+        def _record_tool(
+            *,
+            tc_id: str,
+            name: str,
+            ok: bool,
+            latency_ms: int,
+            result: Any,
+            error: Any,
+        ) -> None:
+            append_evidence_ref(memory, f"{name}:{ok}")
+            _append_event(events, "tool", name=name, ok=ok, latency_ms=latency_ms, error=error)
+            tool_trace_entries.append(
+                {
+                    "id": tc_id,
+                    "name": name,
+                    "ok": ok,
+                    "latency_ms": latency_ms,
+                    "result_preview": result_preview(result),
+                    "error": error,
+                }
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "name": name,
+                    "content": json.dumps(result, ensure_ascii=False, default=str),
+                }
+            )
+
+        for tc in human_calls:
             name = HUMAN_INPUT_TOOL
             args = tc.get("args") or {}
             if not isinstance(args, dict):
@@ -557,7 +726,7 @@ def _run_plan_loop_body(
                     error=failed["error"],
                 )
                 continue
-            if idx > 0:
+            if interrupt_scheduled:
                 failed = {"ok": False, "error": "multiple_human_input_unsupported"}
                 _record_tool(
                     tc_id=tc_id,
@@ -568,7 +737,8 @@ def _run_plan_loop_body(
                     error=failed["error"],
                 )
                 continue
-            # Pause here; on Command(resume=...) this returns the human_response.
+            # Mark before interrupt so post-resume extras in the same batch are rejected.
+            interrupt_scheduled = True
             human_response = interrupt(human_req)
             _record_tool(
                 tc_id=tc_id,
@@ -580,18 +750,30 @@ def _run_plan_loop_body(
             )
 
         if trace["rounds"]:
-            trace["rounds"][-1]["tools"] = tool_trace_entries
+            prior = list(trace["rounds"][-1].get("tools") or [])
+            prior_ids = {str(t.get("id") or "") for t in prior}
+            for entry in tool_trace_entries:
+                if str(entry.get("id") or "") not in prior_ids:
+                    prior.append(entry)
+            trace["rounds"][-1]["tools"] = prior
 
         return {
             "messages": messages,
             "working_memory": memory,
             "last_tool_calls": None,
+            "pending_human_calls": None,
+            **_side_snapshot(),
         }
 
     def reflect_node(state: PlanLoopState) -> dict[str, Any]:
+        _pull_side(state)
         if bag.get("force_finalize") or state.get("stop_reason") == "max_rounds":
             _append_event(events, "reflect", decision="finalize", reason="max_rounds")
-            return {"reflect_decision": "finalize", "stop_reason": state.get("stop_reason") or "max_rounds"}
+            return {
+                "reflect_decision": "finalize",
+                "stop_reason": state.get("stop_reason") or "max_rounds",
+                **_side_snapshot(),
+            }
 
         messages = list(state.get("messages") or [])
         plan = list(state.get("plan") or [])
@@ -669,9 +851,11 @@ def _run_plan_loop_body(
             updates["stop_reason"] = "final"
         # continue: keep current step, act again
 
+        updates.update(_side_snapshot())
         return updates
 
     def finalize_node(state: PlanLoopState) -> dict[str, Any]:
+        _pull_side(state)
         stop_reason = str(state.get("stop_reason") or "final")
         if bag.get("force_finalize") and stop_reason not in {"final", "max_rounds", "timeout", "error"}:
             stop_reason = "max_rounds"
@@ -738,6 +922,7 @@ def _run_plan_loop_body(
                 "result": None,
                 "stop_reason": "error",
                 "handoff": None,
+                **_side_snapshot(),
             }
 
         handoff: dict[str, Any] | None = None
@@ -758,13 +943,19 @@ def _run_plan_loop_body(
             "handoff": handoff,
             "working_memory": memory,
             "plan": state.get("plan") or [],
+            **_side_snapshot(),
         }
 
     def route_after_act(state: PlanLoopState) -> str:
         if bag.get("force_finalize") or state.get("reflect_decision") == "finalize":
             return "finalize"
         if state.get("last_tool_calls"):
-            return "tools"
+            return "tools_normals"
+        return "reflect"
+
+    def route_after_tools_normals(state: PlanLoopState) -> str:
+        if state.get("pending_human_calls"):
+            return "tools_human"
         return "reflect"
 
     def route_after_reflect(state: PlanLoopState) -> str:
@@ -779,7 +970,8 @@ def _run_plan_loop_body(
     graph = StateGraph(PlanLoopState)
     graph.add_node("plan", plan_node)
     graph.add_node("act_model", act_model)
-    graph.add_node("tools", tools_node)
+    graph.add_node("tools_normals", tools_normals)
+    graph.add_node("tools_human", tools_human)
     graph.add_node("reflect", reflect_node)
     graph.add_node("finalize", finalize_node)
     graph.set_entry_point("plan")
@@ -787,9 +979,14 @@ def _run_plan_loop_body(
     graph.add_conditional_edges(
         "act_model",
         route_after_act,
-        {"tools": "tools", "reflect": "reflect", "finalize": "finalize"},
+        {"tools_normals": "tools_normals", "reflect": "reflect", "finalize": "finalize"},
     )
-    graph.add_edge("tools", "reflect")
+    graph.add_conditional_edges(
+        "tools_normals",
+        route_after_tools_normals,
+        {"tools_human": "tools_human", "reflect": "reflect"},
+    )
+    graph.add_edge("tools_human", "reflect")
     graph.add_conditional_edges(
         "reflect",
         route_after_reflect,
@@ -802,6 +999,10 @@ def _run_plan_loop_body(
     config: dict[str, Any] = {"configurable": {"thread_id": tid}}
 
     def _interrupted_envelope(human_request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            _merge_side_from_values((compiled.get_state(config).values or {}))
+        except Exception:  # noqa: BLE001 — best-effort merge
+            pass
         finalize_trace(trace, "interrupted")
         trace["usage"] = usage_totals
         trace["router"] = _build_router_snapshot(events, trace)
@@ -826,10 +1027,14 @@ def _run_plan_loop_body(
         "last_tool_calls": None,
         "last_content": None,
         "reflect_decision": None,
+        "pending_human_calls": None,
+        **_side_snapshot(),
     }
 
     try:
         if resume_payload is not None:
+            existing = compiled.get_state(config)
+            _merge_side_from_values(existing.values or {})
             final_state = compiled.invoke(Command(resume=resume_payload), config)
         else:
             if not force_new:
@@ -842,6 +1047,8 @@ def _run_plan_loop_body(
 
     if isinstance(final_state, dict) and final_state.get("__interrupt__"):
         return _interrupted_envelope(_extract_interrupt_value(final_state))
+
+    _merge_side_from_values(final_state if isinstance(final_state, dict) else {})
 
     stop_reason = str(final_state.get("stop_reason") or "error")
     result = final_state.get("result")
