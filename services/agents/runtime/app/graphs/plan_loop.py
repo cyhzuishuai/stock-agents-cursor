@@ -19,15 +19,31 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, TypedDict
 
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, StateGraph
+from langgraph.types import Command, interrupt
 
 from stock_agents_common.llm_tools import ToolLLMClient, extract_json_from_content
 from stock_agents_common.observability import run_with_tracing
 from stock_agents_common.schemas import validate
 from stock_agents_common.tools import RunContext
+from stock_agents_common.tools.human_input import validate_human_input_args
 from stock_agents_common.trace import append_round, finalize_trace, new_trace, result_preview
 
+from app.checkpoint import default_thread_id, get_checkpointer
 from app.graphs.loop import ToolFn, execute_tool_call, max_rounds_for
+from app.graphs.plan_types import (
+    append_evidence_ref,
+    empty_working_memory,
+    normalize_plan_steps,
+    normalize_reflect,
+)
+
+HUMAN_INPUT_TOOL = "request_human_input"
+
+
+class ThreadAlreadyCompleted(RuntimeError):
+    """Thread has a completed checkpoint; refuse silent re-run without force_new."""
 
 
 def _extract_size_proposals_data(tool_result: dict[str, Any]) -> dict[str, Any] | None:
@@ -37,12 +53,26 @@ def _extract_size_proposals_data(tool_result: dict[str, Any]) -> dict[str, Any] 
     if isinstance(data, dict) and "proposals" in data:
         return data
     return None
-from app.graphs.plan_types import (
-    append_evidence_ref,
-    empty_working_memory,
-    normalize_plan_steps,
-    normalize_reflect,
-)
+
+
+def _extract_interrupt_value(payload: Any) -> dict[str, Any]:
+    """Pull human_request from LangGraph interrupt return or GraphInterrupt."""
+    interrupts: Any = None
+    if isinstance(payload, dict) and payload.get("__interrupt__") is not None:
+        interrupts = payload["__interrupt__"]
+    elif isinstance(payload, GraphInterrupt):
+        interrupts = payload.args[0] if payload.args else ()
+    elif hasattr(payload, "interrupts"):
+        interrupts = getattr(payload, "interrupts")
+
+    if interrupts is None:
+        return {}
+    seq = list(interrupts) if not isinstance(interrupts, (str, bytes)) else []
+    if not seq:
+        return {}
+    first = seq[0]
+    value = getattr(first, "value", first)
+    return value if isinstance(value, dict) else {"question": str(value)}
 
 
 class PlanLoopState(TypedDict, total=False):
@@ -162,8 +192,10 @@ def run_plan_loop(
     ctx: RunContext | None = None,
     ensure_size_proposals: bool = False,
     build_handoff: Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
+    thread_id: str | None = None,
+    force_new: bool = False,
 ) -> dict[str, Any]:
-    """Run plan → act ⇄ tools → reflect → finalize; return agent_run_response envelope."""
+    """Run plan → act ⇄ tools → reflect → finalize; return envelope or interrupted dict."""
     return run_with_tracing(
         f"plan_loop:{agent}",
         lambda: _run_plan_loop_body(
@@ -182,8 +214,58 @@ def run_plan_loop(
             ctx=ctx,
             ensure_size_proposals=ensure_size_proposals,
             build_handoff=build_handoff,
+            thread_id=thread_id,
+            force_new=force_new,
+            resume_payload=None,
         ),
         metadata={"agent": agent},
+    )
+
+
+def resume_plan_loop(
+    thread_id: str,
+    human_response: dict[str, Any],
+    *,
+    agent: str,
+    req: dict[str, Any],
+    system_plan: str,
+    system_act: str,
+    system_reflect: str,
+    user_message: str,
+    tools_schema: list[dict[str, Any]],
+    tool_registry: dict[str, ToolFn],
+    result_schema: str,
+    align_result: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
+    baseline: dict[str, Any] | None = None,
+    llm_client: ToolLLMClient | None = None,
+    ctx: RunContext | None = None,
+    ensure_size_proposals: bool = False,
+    build_handoff: Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Resume a paused plan-loop thread with a human_response (Command.resume)."""
+    return run_with_tracing(
+        f"plan_loop_resume:{agent}",
+        lambda: _run_plan_loop_body(
+            agent=agent,
+            req=req,
+            system_plan=system_plan,
+            system_act=system_act,
+            system_reflect=system_reflect,
+            user_message=user_message,
+            tools_schema=tools_schema,
+            tool_registry=tool_registry,
+            result_schema=result_schema,
+            align_result=align_result,
+            baseline=baseline,
+            llm_client=llm_client,
+            ctx=ctx,
+            ensure_size_proposals=ensure_size_proposals,
+            build_handoff=build_handoff,
+            thread_id=thread_id,
+            force_new=False,
+            resume_payload=human_response if isinstance(human_response, dict) else {"text": str(human_response)},
+        ),
+        metadata={"agent": agent, "thread_id": thread_id},
     )
 
 
@@ -204,6 +286,9 @@ def _run_plan_loop_body(
     ctx: RunContext | None = None,
     ensure_size_proposals: bool = False,
     build_handoff: Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
+    thread_id: str | None = None,
+    force_new: bool = False,
+    resume_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ungated plan-loop body (optional LangSmith wrap lives in ``run_plan_loop``)."""
     client = llm_client or ToolLLMClient()
@@ -392,7 +477,45 @@ def _run_plan_loop_body(
         memory = dict(state.get("working_memory") or empty_working_memory())
         tool_trace_entries: list[dict[str, Any]] = []
 
+        normal_calls: list[dict[str, Any]] = []
+        human_calls: list[dict[str, Any]] = []
         for tc in tool_calls:
+            if str(tc.get("name") or "") == HUMAN_INPUT_TOOL:
+                human_calls.append(tc)
+            else:
+                normal_calls.append(tc)
+
+        def _record_tool(
+            *,
+            tc_id: str,
+            name: str,
+            ok: bool,
+            latency_ms: int,
+            result: Any,
+            error: Any,
+        ) -> None:
+            append_evidence_ref(memory, f"{name}:{ok}")
+            _append_event(events, "tool", name=name, ok=ok, latency_ms=latency_ms, error=error)
+            tool_trace_entries.append(
+                {
+                    "id": tc_id,
+                    "name": name,
+                    "ok": ok,
+                    "latency_ms": latency_ms,
+                    "result_preview": result_preview(result),
+                    "error": error,
+                }
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "name": name,
+                    "content": json.dumps(result, ensure_ascii=False, default=str),
+                }
+            )
+
+        for tc in normal_calls:
             name = str(tc.get("name") or "")
             args = tc.get("args") or {}
             if not isinstance(args, dict):
@@ -406,33 +529,54 @@ def _run_plan_loop_body(
                 if sized is not None:
                     bag["last_size_proposals"] = sized
 
-            ok = bool(executed["ok"])
-            append_evidence_ref(memory, f"{name}:{ok}")
-            _append_event(
-                events,
-                "tool",
+            _record_tool(
+                tc_id=tc_id,
                 name=name,
-                ok=ok,
+                ok=bool(executed["ok"]),
                 latency_ms=executed["latency_ms"],
+                result=executed["result"],
                 error=executed["error"],
             )
-            tool_trace_entries.append(
-                {
-                    "id": tc_id,
-                    "name": name,
-                    "ok": ok,
-                    "latency_ms": executed["latency_ms"],
-                    "result_preview": executed["result_preview"],
-                    "error": executed["error"],
-                }
-            )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "name": name,
-                    "content": json.dumps(executed["result"], ensure_ascii=False, default=str),
-                }
+
+        # V1: interrupt on first valid human call after normals; extras → failed tools.
+        for idx, tc in enumerate(human_calls):
+            name = HUMAN_INPUT_TOOL
+            args = tc.get("args") or {}
+            if not isinstance(args, dict):
+                args = {}
+            tc_id = str(tc.get("id") or "")
+            human_req, err = validate_human_input_args(args)
+            if err or human_req is None:
+                failed = {"ok": False, "error": err or "question_required"}
+                _record_tool(
+                    tc_id=tc_id,
+                    name=name,
+                    ok=False,
+                    latency_ms=0,
+                    result=failed,
+                    error=failed["error"],
+                )
+                continue
+            if idx > 0:
+                failed = {"ok": False, "error": "multiple_human_input_unsupported"}
+                _record_tool(
+                    tc_id=tc_id,
+                    name=name,
+                    ok=False,
+                    latency_ms=0,
+                    result=failed,
+                    error=failed["error"],
+                )
+                continue
+            # Pause here; on Command(resume=...) this returns the human_response.
+            human_response = interrupt(human_req)
+            _record_tool(
+                tc_id=tc_id,
+                name=name,
+                ok=True,
+                latency_ms=0,
+                result=human_response,
+                error=None,
             )
 
         if trace["rounds"]:
@@ -652,7 +796,23 @@ def _run_plan_loop_body(
         {"act": "act_model", "plan": "plan", "finalize": "finalize"},
     )
     graph.add_edge("finalize", END)
-    compiled = graph.compile()
+    compiled = graph.compile(checkpointer=get_checkpointer())
+
+    tid = thread_id or default_thread_id(str(req.get("run_id") or "local"), agent)
+    config: dict[str, Any] = {"configurable": {"thread_id": tid}}
+
+    def _interrupted_envelope(human_request: dict[str, Any]) -> dict[str, Any]:
+        finalize_trace(trace, "interrupted")
+        trace["usage"] = usage_totals
+        trace["router"] = _build_router_snapshot(events, trace)
+        trace["events"] = events
+        trace["stop_reason"] = "interrupted"
+        return {
+            "status": "interrupted",
+            "thread_id": tid,
+            "human_request": human_request,
+            "trace": trace,
+        }
 
     initial: PlanLoopState = {
         "messages": [{"role": "user", "content": user_message}],
@@ -667,7 +827,21 @@ def _run_plan_loop_body(
         "last_content": None,
         "reflect_decision": None,
     }
-    final_state = compiled.invoke(initial)
+
+    try:
+        if resume_payload is not None:
+            final_state = compiled.invoke(Command(resume=resume_payload), config)
+        else:
+            if not force_new:
+                existing = compiled.get_state(config)
+                if existing.values and not existing.next:
+                    raise ThreadAlreadyCompleted(f"thread_already_completed:{tid}")
+            final_state = compiled.invoke(initial, config)
+    except GraphInterrupt as gi:
+        return _interrupted_envelope(_extract_interrupt_value(gi))
+
+    if isinstance(final_state, dict) and final_state.get("__interrupt__"):
+        return _interrupted_envelope(_extract_interrupt_value(final_state))
 
     stop_reason = str(final_state.get("stop_reason") or "error")
     result = final_state.get("result")

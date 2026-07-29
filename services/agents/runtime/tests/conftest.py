@@ -41,3 +41,14 @@ def agent_run_request() -> dict:
 def mock_script_paths() -> dict[str, Path]:
     base = CONTRACTS / "fixtures" / "mock_tool_scripts"
     return {"analyst": base / "analyst.json", "portfolio": base / "portfolio.json"}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_checkpointer(tmp_path, monkeypatch):
+    """Each test gets a fresh SQLite checkpointer path (plan_loop always compiles with one)."""
+    monkeypatch.setenv("AGENT_CHECKPOINT_SQLITE_PATH", str(tmp_path / "checkpoints.sqlite"))
+    from app.checkpoint import reset_checkpointer_for_tests
+
+    reset_checkpointer_for_tests()
+    yield
+    reset_checkpointer_for_tests()

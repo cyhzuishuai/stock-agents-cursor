@@ -11,6 +11,7 @@ from stock_agents_common.tools import (
     get_daily_bars,
     get_news,
     get_risk_context,
+    request_human_input,
     web_search,
 )
 
@@ -23,6 +24,7 @@ Do not call tools yet. Prefer steps that fetch account/risk views, daily bars, a
 
 SYSTEM_ACT = """You are an equity analyst agent with tools.
 Work only on current_step; call tools or say step complete.
+Call request_human_input only when confirmation or a critical fact is missing.
 When all evidence is gathered, return JSON:
 {"items":[{"symbol","bias","confidence","thesis","side","urgency","rationale","evidence"?}], "warnings"?}
 Rules:
@@ -77,6 +79,19 @@ def _tool_schemas() -> list[dict[str, Any]]:
             "Return injected risk_context (execution_mode and rule thresholds).",
             {"type": "object", "properties": {}},
         ),
+        openai_tool_schema(
+            "request_human_input",
+            "Ask a human for confirmation or a missing critical fact. Use sparingly.",
+            {
+                "type": "object",
+                "required": ["question"],
+                "properties": {
+                    "question": {"type": "string"},
+                    "context": {"type": "object"},
+                    "options": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        ),
     ]
     if web_search_enabled():
         schemas.append(
@@ -102,6 +117,7 @@ def _tool_registry() -> dict[str, Any]:
         "get_news": get_news,
         "get_account_view": get_account_view,
         "get_risk_context": get_risk_context,
+        "request_human_input": request_human_input,
     }
     if web_search_enabled():
         registry["web_search"] = web_search

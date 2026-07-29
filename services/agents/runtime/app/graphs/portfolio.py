@@ -11,6 +11,7 @@ from stock_agents_common.tools import (
     get_account_view,
     get_last_closes,
     get_risk_context,
+    request_human_input,
     size_proposals,
 )
 
@@ -23,6 +24,7 @@ last closes, and size_proposals. Do not call tools yet."""
 
 SYSTEM_ACT = """You are a portfolio sizing agent.
 Work only on current_step; call tools or say step complete.
+Call request_human_input only when confirmation or a critical fact is missing.
 Use account/risk views, last closes, and size_proposals to produce executable proposals.
 Prefer analyst handoff thesis/confidence when sizing; open_questions are informational.
 Skip hold intents. Never sell more than position qty. Respect cash constraints.
@@ -74,6 +76,19 @@ def _tool_schemas() -> list[dict[str, Any]]:
                 },
             },
         ),
+        openai_tool_schema(
+            "request_human_input",
+            "Ask a human for confirmation or a missing critical fact. Use sparingly.",
+            {
+                "type": "object",
+                "required": ["question"],
+                "properties": {
+                    "question": {"type": "string"},
+                    "context": {"type": "object"},
+                    "options": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        ),
     ]
 
 
@@ -83,6 +98,7 @@ def _tool_registry() -> dict[str, Any]:
         "get_risk_context": get_risk_context,
         "get_last_closes": get_last_closes,
         "size_proposals": size_proposals,
+        "request_human_input": request_human_input,
     }
 
 
